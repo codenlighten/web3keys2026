@@ -32,7 +32,33 @@ fi
 gzip -f "$OUT"
 chmod 600 "$OUT.gz"
 
-# Prune backups older than the retention window.
+# Prune local backups older than the retention window.
 find "$DEST" -maxdepth 1 -name 'web3keys-*.db.gz' -mtime "+$RETAIN_DAYS" -delete
 
-echo "backup: wrote $OUT.gz (retain ${RETAIN_DAYS}d); $(ls -1 "$DEST"/web3keys-*.db.gz 2>/dev/null | wc -l) copies on disk"
+echo "backup: wrote $OUT.gz (retain ${RETAIN_DAYS}d); $(ls -1 "$DEST"/web3keys-*.db.gz 2>/dev/null | wc -l) local copies"
+
+# Off-site sync to DigitalOcean Spaces (S3-compatible), if configured. The backups
+# hold encrypted seeds, so they are uploaded with a PRIVATE ACL. rclone is configured
+# purely via env vars (RCLONE_CONFIG_SPACES_*) so secrets never appear in argv.
+if [ -n "${DO_SPACES_KEY:-}" ] && [ -n "${DO_SPACES_BUCKET:-}" ]; then
+  if ! command -v rclone >/dev/null; then
+    echo "offsite: DO_SPACES_* set but rclone is not installed" >&2
+    exit 1
+  fi
+  folder="${DO_SPACES_FOLDER:-/web3keys}"; folder="${folder#/}" # strip any leading slash
+  export RCLONE_CONFIG_SPACES_TYPE=s3
+  export RCLONE_CONFIG_SPACES_PROVIDER=DigitalOcean
+  export RCLONE_CONFIG_SPACES_ACCESS_KEY_ID="$DO_SPACES_KEY"
+  export RCLONE_CONFIG_SPACES_SECRET_ACCESS_KEY="$DO_SPACES_SECRET"
+  export RCLONE_CONFIG_SPACES_ENDPOINT="$DO_SPACES_ENDPOINT"
+  export RCLONE_CONFIG_SPACES_ACL=private
+  REMOTE="spaces:${DO_SPACES_BUCKET}/${folder}"
+
+  rclone copy "$OUT.gz" "$REMOTE/" --s3-no-check-bucket --no-traverse
+  echo "offsite: uploaded $(basename "$OUT.gz") -> $REMOTE/"
+
+  # Remote retention (best-effort; never fails the run since the upload already succeeded).
+  rclone delete "$REMOTE" --min-age "${RETAIN_DAYS}d" --include 'web3keys-*.db.gz' 2>/dev/null || true
+else
+  echo "offsite: DO_SPACES_* not configured, skipping remote upload"
+fi
