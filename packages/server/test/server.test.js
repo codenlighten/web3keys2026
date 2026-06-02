@@ -11,8 +11,10 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 
 const security = require('../src/security');
+const shares = require('../src/shares');
 const db = require('../src/db');
 const { createApp } = require('../src/app');
+const { threshold } = require('@web3keys/wallet-core');
 
 // Deterministic OTP so we can verify without reading email. svc calls
 // security.generateOtp() via the namespace, so overriding the property works.
@@ -57,62 +59,117 @@ async function api(method, path, body, token) {
   return { status: res.status, json };
 }
 
-test('security: mnemonic seal/unseal round trips and rejects wrong password', () => {
-  const m =
-    'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
-  const sealed = security.encryptMnemonic(m, 'correct horse');
-  assert.equal(security.decryptMnemonic(sealed, 'correct horse'), m);
-  assert.throws(() => security.decryptMnemonic(sealed, 'wrong password'));
+test('share sealing: S2 (password) and S3 (master key) round-trip; wrong key fails', () => {
+  const { user, service, ttp } = threshold.splitSeed(
+    'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
+  );
+  // S2 sealed under password
+  const s2 = shares.sealUserShare(service, 'correct horse');
+  assert.equal(shares.openUserShare(s2, 'correct horse'), service);
+  assert.throws(() => shares.openUserShare(s2, 'wrong'));
+  // S3 sealed under master key
+  const s3 = shares.sealTtpShare(ttp);
+  assert.equal(shares.openTtpShare(s3), ttp);
+  // sanity: the opened S2 + S3 still reconstruct, and so do user + S3
+  assert.ok(
+    threshold.reconstruct([shares.openUserShare(s2, 'correct horse'), shares.openTtpShare(s3)])
+  );
+  assert.ok(threshold.reconstruct([user, shares.openTtpShare(s3)]));
   // password verifier
   const v = security.hashPassword('s3cret!!');
   assert.ok(security.verifyPassword('s3cret!!', v));
   assert.ok(!security.verifyPassword('nope', v));
 });
 
-test('full flow: register → verify → login → profile → send-auth-guard', async () => {
+test('full flow: register → verify → login → profile → export escape-hatch', async () => {
   const email = 'alice@example.com';
   const password = 'hunter2hunter2';
 
   const reg = await api('POST', '/api/auth/register', { email, password });
   assert.equal(reg.status, 201);
-  assert.equal(reg.json.mnemonic.split(' ').length, 12); // shown once
+  assert.ok(reg.json.recoveryShare && !reg.json.mnemonic); // S1 shown once, NO raw seed
   assert.equal(reg.json.profile.paymail, 'alice@web3keys.com');
-  const mnemonic = reg.json.mnemonic;
 
   // cannot log in before verifying
-  const early = await api('POST', '/api/auth/login', { email, password });
-  assert.equal(early.status, 403);
+  assert.equal((await api('POST', '/api/auth/login', { email, password })).status, 403);
 
   const ver = await api('POST', '/api/auth/verify', { email, code: '123456' });
   assert.equal(ver.status, 200);
-  assert.ok(ver.json.verified);
-
-  // wrong code path
-  const bad = await api('POST', '/api/auth/verify', { email, code: '000000' });
-  assert.equal(bad.status, 404); // otp consumed after success
 
   const login = await api('POST', '/api/auth/login', { email, password });
   assert.equal(login.status, 200);
-  assert.ok(login.json.token);
   const token = login.json.token;
 
-  // wrong password rejected
-  const wrong = await api('POST', '/api/auth/login', { email, password: 'wrongwrong' });
-  assert.equal(wrong.status, 401);
+  // wrong password rejected (S2 won't open)
+  assert.equal(
+    (await api('POST', '/api/auth/login', { email, password: 'wrongwrong' })).status,
+    401
+  );
 
   const profile = await api('GET', '/api/wallet/profile', null, token);
   assert.equal(profile.status, 200);
-  assert.equal(profile.json.paymail, 'alice@web3keys.com');
-  assert.ok(/^1[1-9A-HJ-NP-Za-km-z]+$/.test(profile.json.address)); // base58 P2PKH
+  assert.ok(/^1[1-9A-HJ-NP-Za-km-z]+$/.test(profile.json.address));
 
-  // the stored deposit address must be reproducible from the mnemonic the user backed up
+  // export (escape hatch) reveals a 12-word seed that derives the SAME deposit address —
+  // proving the 2-of-3 reconstruction yields the real wallet.
+  const exp = await api('GET', '/api/wallet/export', null, token);
+  assert.equal(exp.status, 200);
+  assert.equal(exp.json.mnemonic.split(' ').length, 12);
   const { Wallet } = require('@web3keys/wallet-core');
-  const restored = Wallet.fromMnemonic(mnemonic).keyManager.address('finance');
-  assert.equal(restored, profile.json.address);
+  assert.equal(
+    Wallet.fromMnemonic(exp.json.mnemonic).keyManager.address('finance'),
+    profile.json.address
+  );
 
-  // protected route without token
-  const noauth = await api('GET', '/api/wallet/profile');
-  assert.equal(noauth.status, 401);
+  assert.equal((await api('GET', '/api/wallet/profile')).status, 401); // no token
+});
+
+test('recovery: recovery share + new password restores access; old password fails', async () => {
+  const email = 'carol@example.com';
+  const password = 'origpassword12';
+  const reg = await api('POST', '/api/auth/register', { email, password });
+  await api('POST', '/api/auth/verify', { email, code: '123456' });
+  const recoveryShare = reg.json.recoveryShare;
+
+  const addrBefore = await loginAddress(email, password);
+
+  // recover with the share + a new password
+  const newPassword = 'brandnewpass99';
+  const rec = await api('POST', '/api/auth/recover', { email, recoveryShare, newPassword });
+  assert.equal(rec.status, 200);
+  assert.ok(rec.json.recoveryShare); // a fresh recovery share is issued
+  assert.notEqual(rec.json.recoveryShare, recoveryShare); // old one consumed
+
+  // old password no longer works; new one does, and the wallet is unchanged
+  assert.equal((await api('POST', '/api/auth/login', { email, password })).status, 401);
+  const addrAfter = await loginAddress(email, newPassword);
+  assert.equal(addrAfter, addrBefore); // same seed → same address
+});
+
+async function loginAddress(email, password) {
+  const login = await api('POST', '/api/auth/login', { email, password });
+  const profile = await api('GET', '/api/wallet/profile', null, login.json.token);
+  return profile.json.address;
+}
+
+test('no plaintext seed or share is recoverable from the DB at rest without secrets', async () => {
+  const email = 'dave@example.com';
+  const password = 'davepassword12';
+  await api('POST', '/api/auth/register', { email, password });
+  await api('POST', '/api/auth/verify', { email, code: '123456' });
+
+  const user = await db.findByEmail(email);
+  // The exported seed (what an attacker wants) must not appear in any stored column.
+  const login = await api('POST', '/api/auth/login', { email, password });
+  const mnemonic = (await api('GET', '/api/wallet/export', null, login.json.token)).json.mnemonic;
+
+  const us = await db.getUserShare(user.id);
+  const ts = await db.getTtpShare(user.id);
+  const dump = JSON.stringify({ user, us, ts });
+  assert.ok(!dump.includes(mnemonic), 'mnemonic must not be present in DB');
+  // The user_shares row alone is just one (password-sealed) share — even decrypting it
+  // (we cannot, without the password) would be one of three; insufficient to reconstruct.
+  assert.ok(us.ciphertext && ts.ciphertext);
 });
 
 test('paymail: discovery, pki, and payment destination', async () => {

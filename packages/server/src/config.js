@@ -41,6 +41,15 @@ const config = {
   jwtSecret: process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex'),
   sessionTtlMs: Number(process.env.SESSION_TTL_MS || 30 * 60 * 1000), // 30 min
 
+  // Master key (kept in the systemd secrets file, NOT the database) used to encrypt the
+  // TTP-bound share (S3) at rest. REQUIRED in production. In dev/test a stable key is
+  // derived so the server runs without extra setup.
+  shareMasterKey:
+    process.env.SHARE_MASTER_KEY ||
+    (process.env.NODE_ENV === 'production'
+      ? ''
+      : crypto.createHash('sha256').update('web3keys-dev-share-master').digest('hex')),
+
   otpTtlMs: Number(process.env.OTP_TTL_MS || 10 * 60 * 1000), // 10 min
   otpLength: 6,
 
@@ -66,6 +75,7 @@ const configSchema = z.object({
   databaseUrl: z.string(),
   redisUrl: z.string(),
   jwtSecret: z.string().min(16),
+  shareMasterKey: z.string(),
   sessionTtlMs: z.number().int().positive(),
   otpTtlMs: z.number().int().positive(),
   otpLength: z.number().int().min(4).max(10),
@@ -94,6 +104,7 @@ function assertProductionConfig() {
   if (!config.isProd) return;
   const missing = [];
   if (!process.env.JWT_SECRET) missing.push('JWT_SECRET');
+  if (!config.shareMasterKey) missing.push('SHARE_MASTER_KEY');
   if (!config.databaseUrl) missing.push('DATABASE_URL');
   if (!config.redisUrl) missing.push('REDIS_URL');
   if (!config.smtp.host || !config.smtp.user || !config.smtp.pass)

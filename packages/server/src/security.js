@@ -4,19 +4,14 @@ const crypto = require('crypto');
 const { config } = require('./config');
 
 /**
- * Security primitives for the wallet service.
- *
- * Two independent password-derived values, with separate salts (domain separation):
- *   - a password VERIFIER (to authenticate login)            -> hashPassword/verifyPassword
- *   - a mnemonic ENCRYPTION KEY (to seal the seed at rest)   -> encryptMnemonic/decryptMnemonic
- *
- * The server therefore stores only: the verifier, and the AES-GCM-sealed mnemonic.
- * Neither yields the mnemonic without the user's password. The seed is decrypted only
- * transiently, inside an authenticated session, for signing operations.
+ * Security primitives for the wallet service: password verifier, scrypt KDF, generic
+ * AES-256-GCM, and OTP. Threshold share sealing (S2 under the user's password, S3 under
+ * the server master key) is built on these in shares.js.
  */
 
 const { N, r, p, keylen } = config.scrypt;
 
+/** Derive a 32-byte key from a password (or any string) and salt via scrypt. */
 function scrypt(password, salt) {
   return crypto.scryptSync(Buffer.from(password, 'utf8'), salt, keylen, {
     N,
@@ -24,6 +19,30 @@ function scrypt(password, salt) {
     p,
     maxmem: 256 * 1024 * 1024,
   });
+}
+
+// ── generic AES-256-GCM ─────────────────────────────────────────────────────────
+
+/** Encrypt with a 32-byte key. Returns hex {iv, tag, ciphertext}. */
+function aesEncrypt(plaintext, key) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const ct = Buffer.concat([
+    cipher.update(Buffer.isBuffer(plaintext) ? plaintext : Buffer.from(plaintext, 'utf8')),
+    cipher.final(),
+  ]);
+  return {
+    iv: iv.toString('hex'),
+    tag: cipher.getAuthTag().toString('hex'),
+    ciphertext: ct.toString('hex'),
+  };
+}
+
+/** Decrypt {iv, tag, ciphertext} (hex) with a 32-byte key. Throws on bad key/tamper. */
+function aesDecrypt(sealed, key) {
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(sealed.iv, 'hex'));
+  decipher.setAuthTag(Buffer.from(sealed.tag, 'hex'));
+  return Buffer.concat([decipher.update(Buffer.from(sealed.ciphertext, 'hex')), decipher.final()]);
 }
 
 // ── password verifier ──────────────────────────────────────────────────────────
@@ -47,34 +66,6 @@ function verifyPassword(password, stored) {
   }
 }
 
-// ── mnemonic encryption (AES-256-GCM, password-derived key) ──────────────────────
-
-function encryptMnemonic(mnemonic, password) {
-  const encSalt = crypto.randomBytes(16);
-  const key = scrypt(password, encSalt);
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-  const ct = Buffer.concat([cipher.update(Buffer.from(mnemonic, 'utf8')), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return {
-    encSalt: encSalt.toString('hex'),
-    iv: iv.toString('hex'),
-    tag: tag.toString('hex'),
-    ciphertext: ct.toString('hex'),
-  };
-}
-
-function decryptMnemonic(sealed, password) {
-  const key = scrypt(password, Buffer.from(sealed.encSalt, 'hex'));
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(sealed.iv, 'hex'));
-  decipher.setAuthTag(Buffer.from(sealed.tag, 'hex'));
-  const pt = Buffer.concat([
-    decipher.update(Buffer.from(sealed.ciphertext, 'hex')),
-    decipher.final(),
-  ]);
-  return pt.toString('utf8'); // throws (bad auth tag) on wrong password
-}
-
 // ── OTP ──────────────────────────────────────────────────────────────────────
 
 function generateOtp() {
@@ -93,10 +84,11 @@ function randomToken(bytes = 24) {
 }
 
 module.exports = {
+  scrypt,
+  aesEncrypt,
+  aesDecrypt,
   hashPassword,
   verifyPassword,
-  encryptMnemonic,
-  decryptMnemonic,
   generateOtp,
   hashOtp,
   randomToken,

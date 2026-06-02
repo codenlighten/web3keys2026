@@ -226,6 +226,21 @@ a {
   font-size: 10px;
 }
 
+/* Single recovery-share blob (overrides the numbered-grid layout). */
+.mnemonic:has(.share-blob) {
+  grid-template-columns: 1fr;
+}
+.mnemonic li.share-blob {
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+  user-select: all;
+}
+.mnemonic li.share-blob::before {
+  content: '';
+}
+
 .row {
   display: flex;
   align-items: center;

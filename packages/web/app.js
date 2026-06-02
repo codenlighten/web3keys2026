@@ -1,9 +1,9 @@
 'use strict';
 
 // web3keys frontend — vanilla SPA for register / verify / login / dashboard.
-// Talks to the same-origin API. Uses the @smartledger/bsv CDN bundle (window.bsv)
-// to verify, client-side, that the server-returned recovery phrase really controls
-// the address/identity the server claims.
+// Talks to the same-origin API. Registration returns a one-time recovery share (one
+// slice of a 2-of-3 split); the full frontend (with recovery + export flows) is rebuilt
+// as a React/Vite PWA in Phase 5.
 
 const TOKEN_KEY = 'web3keys_token';
 const $ = (sel) => document.querySelector(sel);
@@ -48,22 +48,6 @@ async function api(method, path, body, token) {
 // Transient registration state (kept only until sign-in completes).
 let pending = { email: null, password: null };
 
-// ── client-side seed verification (trust-but-verify) ──────────────────────────
-function verifySeedLocally(mnemonic, profile) {
-  try {
-    if (!window.bsv || !window.bsv.Mnemonic) return null; // CDN not loaded
-    const { Mnemonic, HDPrivateKey } = window.bsv;
-    const seed = Mnemonic.fromString(mnemonic).toSeed();
-    const master = HDPrivateKey.fromSeed(seed);
-    const financeAddr = master.deriveChild("m/44'/0'/0'/0/0").privateKey.toAddress().toString();
-    const identityKey = master.deriveChild("m/44'/236'/0'/0/0").privateKey.publicKey.toString();
-    return financeAddr === profile.address && identityKey === profile.identityKey;
-  } catch (e) {
-    console.warn('seed verify error', e);
-    return null;
-  }
-}
-
 // ── copy helper ───────────────────────────────────────────────────────────────
 async function copyText(text, btn) {
   try {
@@ -91,7 +75,7 @@ $('#form-register').addEventListener('submit', async (e) => {
   try {
     const r = await api('POST', '/api/auth/register', { email, password });
     pending = { email, password };
-    renderMnemonic(r.mnemonic, r.profile);
+    renderRecoveryShare(r.recoveryShare, r.profile);
     show('mnemonic');
   } catch (err) {
     alertMsg(err.message);
@@ -101,35 +85,23 @@ $('#form-register').addEventListener('submit', async (e) => {
   }
 });
 
-function renderMnemonic(mnemonic, profile) {
+function renderRecoveryShare(share, profile) {
+  // The recovery share is one of a 2-of-3 split — by itself it cannot move funds, so it
+  // is safe to download, but losing it forfeits password-free recovery.
   const grid = $('#mnemonic-grid');
   grid.innerHTML = '';
-  mnemonic.split(' ').forEach((w) => {
-    const li = document.createElement('li');
-    li.textContent = w;
-    grid.appendChild(li);
-  });
-  $('#copy-mnemonic').onclick = () => copyText(mnemonic, $('#copy-mnemonic'));
+  const li = document.createElement('li');
+  li.className = 'share-blob';
+  li.textContent = share;
+  grid.appendChild(li);
+
+  $('#copy-mnemonic').onclick = () => copyText(share, $('#copy-mnemonic'));
   $('#saved-check').checked = false;
   $('#mnemonic-continue').disabled = true;
 
-  // Client-side proof that this phrase controls the server-issued address/identity.
   const badge = $('#verify-badge');
-  const ok = verifySeedLocally(mnemonic, profile);
-  if (ok === true) {
-    badge.textContent = '✓ verified controls ' + shorten(profile.address);
-    badge.className = 'verify ok';
-  } else if (ok === false) {
-    badge.textContent = '⚠ phrase did not match server address';
-    badge.className = 'verify bad';
-  } else {
-    badge.textContent = '';
-    badge.className = 'verify';
-  }
-}
-
-function shorten(s) {
-  return s ? s.slice(0, 6) + '…' + s.slice(-4) : '';
+  badge.textContent = `recovery share for ${profile.paymail}`;
+  badge.className = 'verify';
 }
 
 $('#saved-check').addEventListener('change', (e) => {

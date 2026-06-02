@@ -7,10 +7,12 @@ const { migrate } = require('./db/migrate');
  * Application data access (Postgres). All methods are async.
  *
  * What is stored per user (and, deliberately, what is NOT):
- *   STORED: email, password verifier, AES-GCM-sealed mnemonic (Phase 1; replaced by a
- *           threshold server-share in Phase 2), PUBLIC xpubs + identity public key,
- *           paymail alias, receive-address counter.
- *   NOT STORED: the plaintext mnemonic or any private key.
+ *   STORED: email, password verifier, PUBLIC xpubs + identity public key, paymail alias,
+ *           receive-address counter; plus two SEALED Shamir shares in separate stores —
+ *           S2 in user_shares (sealed under the user's password) and S3 in ttp_shares
+ *           (sealed under the server master key, never in the DB).
+ *   NOT STORED: the plaintext mnemonic, any private key, or any single reconstructable
+ *           key. At rest, no two openable shares exist without a password / master key.
  */
 
 async function init() {
@@ -22,18 +24,14 @@ async function init() {
 async function createUser(u) {
   return one(
     `INSERT INTO users
-       (email, alias, password_verifier, enc_salt, enc_iv, enc_tag, enc_ciphertext,
+       (email, alias, password_verifier,
         identity_pubkey, finance_xpub, tokens_xpub, identity_xpub, verified)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
      RETURNING *`,
     [
       u.email,
       u.alias,
       u.passwordVerifier,
-      u.sealed.encSalt,
-      u.sealed.iv,
-      u.sealed.tag,
-      u.sealed.ciphertext,
       u.identityPubkey,
       u.financeXpub,
       u.tokensXpub,
@@ -41,6 +39,40 @@ async function createUser(u) {
       !!u.verified,
     ]
   );
+}
+
+// ── threshold shares (S2 in user_shares, S3 in ttp_shares — separate stores) ──────
+
+async function putUserShare(userId, s) {
+  return query(
+    `INSERT INTO user_shares (user_id, enc_salt, iv, tag, ciphertext)
+       VALUES ($1,$2,$3,$4,$5)
+     ON CONFLICT (user_id) DO UPDATE
+       SET enc_salt = EXCLUDED.enc_salt, iv = EXCLUDED.iv, tag = EXCLUDED.tag,
+           ciphertext = EXCLUDED.ciphertext`,
+    [userId, s.encSalt, s.iv, s.tag, s.ciphertext]
+  );
+}
+
+async function getUserShare(userId) {
+  const r = await one('SELECT * FROM user_shares WHERE user_id = $1', [userId]);
+  return r ? { encSalt: r.enc_salt, iv: r.iv, tag: r.tag, ciphertext: r.ciphertext } : null;
+}
+
+async function putTtpShare(userId, s) {
+  return query(
+    `INSERT INTO ttp_shares (user_id, iv, tag, ciphertext, key_version)
+       VALUES ($1,$2,$3,$4,$5)
+     ON CONFLICT (user_id) DO UPDATE
+       SET iv = EXCLUDED.iv, tag = EXCLUDED.tag, ciphertext = EXCLUDED.ciphertext,
+           key_version = EXCLUDED.key_version`,
+    [userId, s.iv, s.tag, s.ciphertext, s.keyVersion || 1]
+  );
+}
+
+async function getTtpShare(userId) {
+  const r = await one('SELECT * FROM ttp_shares WHERE user_id = $1', [userId]);
+  return r ? { iv: r.iv, tag: r.tag, ciphertext: r.ciphertext, keyVersion: r.key_version } : null;
 }
 
 async function findByEmail(email) {
@@ -53,6 +85,14 @@ async function findByAlias(alias) {
 
 async function setVerified(email) {
   const { rowCount } = await query('UPDATE users SET verified = TRUE WHERE email = $1', [email]);
+  return rowCount > 0;
+}
+
+async function setPassword(email, passwordVerifier) {
+  const { rowCount } = await query('UPDATE users SET password_verifier = $2 WHERE email = $1', [
+    email,
+    passwordVerifier,
+  ]);
   return rowCount > 0;
 }
 
@@ -110,7 +150,12 @@ module.exports = {
   findByEmail,
   findByAlias,
   setVerified,
+  setPassword,
   bumpReceiveIndex,
+  putUserShare,
+  getUserShare,
+  putTtpShare,
+  getTtpShare,
   upsertOtp,
   getOtp,
   incrementOtpAttempts,

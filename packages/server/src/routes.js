@@ -71,6 +71,16 @@ router.post(
   })
 );
 
+router.post(
+  '/api/auth/recover',
+  authLimiter,
+  h(async (req, res) => {
+    const { email, recoveryShare, newPassword } = req.body || {};
+    const result = await svc.recover({ email, recoveryShare, newPassword });
+    res.json(result);
+  })
+);
+
 // ── authenticated middleware ──────────────────────────────────────────────────
 
 const authed = h(async (req, res, next) => {
@@ -125,5 +135,16 @@ router.post(
     res.json(result);
   })
 );
+
+// Escape hatch: reveal the full mnemonic so the user can move to self-custody. Requires
+// an active (unlocked) session, since the seed only exists in the session vault.
+router.get('/api/wallet/export', authed, (req, res) => {
+  const wallet = session.getWallet(req.claims.sid);
+  if (!wallet) return res.status(401).json({ error: 'session expired; please log in again' });
+  res.json({
+    mnemonic: wallet.mnemonic,
+    warning: 'Anyone with these words controls your funds. Store them offline.',
+  });
+});
 
 module.exports = { router, authed };

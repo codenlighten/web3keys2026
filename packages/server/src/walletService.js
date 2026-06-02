@@ -1,9 +1,10 @@
 'use strict';
 
-const { Wallet, WhatsOnChainProvider, bsv } = require('@web3keys/wallet-core');
+const { Wallet, WhatsOnChainProvider, bsv, threshold } = require('@web3keys/wallet-core');
 const { config } = require('./config');
 const db = require('./db');
 const security = require('./security');
+const shares = require('./shares');
 const { sendOtpEmail } = require('./mailer');
 
 /**
@@ -90,34 +91,37 @@ async function register({ email, password }) {
   }
   if (await db.findByEmail(email)) throw new ServiceError('Email already registered', 409);
 
-  // Generate the wallet and seal its mnemonic with the user's password.
+  // Generate the wallet and split its seed 2-of-3. The server stores only the two
+  // service shares (S2 sealed under the password, S3 sealed under the master key) plus
+  // public xpubs/identity key. S1 goes to the user as their recovery share.
   const wallet = Wallet.generate({ network: config.network });
-  const mnemonic = wallet.mnemonic;
-  const sealed = security.encryptMnemonic(mnemonic, password);
+  const split = threshold.splitSeed(wallet.mnemonic); // { user, service, ttp }
   const described = wallet.keyManager.describe();
-
   const alias = await uniqueAlias(email);
-  await db.createUser({
+
+  const user = await db.createUser({
     email,
     alias,
     passwordVerifier: security.hashPassword(password),
-    sealed,
     identityPubkey: wallet.identity.identityKey,
     financeXpub: described.finance.xpub,
     tokensXpub: described.tokens.xpub,
     identityXpub: described.identity.xpub,
     verified: false,
-    createdAt: isoNow(),
   });
+
+  await db.putUserShare(user.id, shares.sealUserShare(split.service, password)); // S2
+  await db.putTtpShare(user.id, shares.sealTtpShare(split.ttp)); // S3
 
   await issueOtp(email, 'register');
 
-  const user = await db.findByEmail(email);
-  // The mnemonic is returned exactly once, here, for the user to back up. Never stored
-  // or logged in plaintext, and never returned again.
+  // The recovery share (S1) is returned exactly once for the user to store off-box.
+  // The full mnemonic is never returned here — it is available via the authenticated
+  // /api/wallet/export escape hatch after login.
   return {
-    mnemonic,
-    backupReminder: 'Write down or copy these 12 words now. They are shown only once.',
+    recoveryShare: split.user,
+    backupReminder:
+      'Save this recovery share now — it is shown only once and lets you recover your wallet.',
     profile: publicProfile(user),
     otpSent: true,
   };
@@ -147,8 +151,12 @@ async function verifyRegistration({ email, code }) {
 }
 
 /**
- * Authenticate and UNLOCK: verifies the password, decrypts the mnemonic, and returns a
- * live Wallet instance (with provider) plus the user row. Throws on bad credentials.
+ * Authenticate and UNLOCK: verify the password, then reconstruct the seed from the two
+ * service shares — S2 (opened with the password) + S3 (opened with the master key) —
+ * and return a live Wallet plus the user row. Throws on bad credentials.
+ *
+ * The seed exists only transiently here, held in the session vault for signing. A DB
+ * breach at rest cannot do this: S2 needs the password, S3 needs the (off-DB) master key.
  */
 async function unlock({ email, password }) {
   email = String(email || '')
@@ -160,22 +168,55 @@ async function unlock({ email, password }) {
   if (!security.verifyPassword(password, user.password_verifier)) {
     throw new ServiceError('Invalid credentials', 401);
   }
-  let mnemonic;
+
+  const [us, ts] = await Promise.all([db.getUserShare(user.id), db.getTtpShare(user.id)]);
+  if (!us || !ts) throw new ServiceError('Wallet shares missing', 500);
+
+  let s2;
   try {
-    mnemonic = security.decryptMnemonic(
-      {
-        encSalt: user.enc_salt,
-        iv: user.enc_iv,
-        tag: user.enc_tag,
-        ciphertext: user.enc_ciphertext,
-      },
-      password
-    );
+    s2 = shares.openUserShare(us, password); // password-gated service share
   } catch {
     throw new ServiceError('Invalid credentials', 401);
   }
+  const s3 = shares.openTtpShare(ts); // master-key-gated TTP share
+  const mnemonic = threshold.reconstruct([s2, s3]);
   const wallet = Wallet.fromMnemonic(mnemonic, { network: config.network, provider });
   return { user, wallet };
+}
+
+/**
+ * Recover access using the user's recovery share (S1) when the password is lost.
+ * Reconstructs from S1 + S3, then re-splits the seed (so a fresh recovery share is
+ * issued and the old one is consumed) and re-seals S2 under the new password. The seed
+ * and wallet addresses are unchanged.
+ */
+async function recover({ email, recoveryShare, newPassword }) {
+  email = String(email || '')
+    .trim()
+    .toLowerCase();
+  if (!newPassword || String(newPassword).length < 8) {
+    throw new ServiceError('Password must be at least 8 characters');
+  }
+  const user = await db.findByEmail(email);
+  if (!user) throw new ServiceError('Recovery failed', 401);
+  const ts = await db.getTtpShare(user.id);
+  if (!ts) throw new ServiceError('Wallet shares missing', 500);
+
+  let mnemonic;
+  try {
+    mnemonic = threshold.reconstruct([recoveryShare, shares.openTtpShare(ts)]);
+  } catch {
+    throw new ServiceError('Invalid recovery share', 400);
+  }
+
+  // Re-split so the consumed recovery share is replaced and S2 is re-sealed under the
+  // new password (addresses are derived from the unchanged seed, so they don't move).
+  const fresh = threshold.splitSeed(mnemonic);
+  await db.putUserShare(user.id, shares.sealUserShare(fresh.service, newPassword));
+  await db.putTtpShare(user.id, shares.sealTtpShare(fresh.ttp));
+  await db.setPassword(email, security.hashPassword(newPassword));
+
+  return { recoveryShare: fresh.user, profile: publicProfile(user) };
 }
 
 async function getBalance(user) {
@@ -218,17 +259,13 @@ async function send(wallet, { to, satoshis }) {
   return { txid: result.broadcastTxid || result.txid, fee: result.fee, to: address, satoshis: amt };
 }
 
-function isoNow() {
-  // ISO timestamp; isolated so it's easy to stub in tests.
-  return new Date().toISOString();
-}
-
 module.exports = {
   provider,
   ServiceError,
   register,
   verifyRegistration,
   unlock,
+  recover,
   getBalance,
   send,
   publicProfile,
