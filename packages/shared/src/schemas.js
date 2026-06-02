@@ -43,6 +43,29 @@ const schemas = {
   twoFactorEnable: z.object({ code: otpCode }),
   twoFactorDisable: z.object({ code: otpCode }),
   deleteAccount: z.object({ password }),
+  // SmartLedger Login (sl-login.js) third-party SSO endpoints.
+  ssoVerifyLogin: z.object({
+    address: z.string().min(1).max(128),
+    signature: z.string().min(1).max(200),
+    challenge: z.string().min(1).max(128),
+    domain: z.string().min(1).max(253),
+  }),
+  ssoCheckSession: z.object({
+    token: z.string().min(1).max(128),
+    domain: z.string().max(253).optional(),
+  }),
+  ssoRevokeSession: z.object({
+    token: z.string().min(1).max(128),
+    domain: z.string().max(253).optional(),
+  }),
+  ssoVerifyAttest: z.object({
+    address: z.string().min(1).max(128),
+    signature: z.string().min(1).max(200),
+    payload: z.string().min(1).max(4096),
+    app: z.string().max(128).optional(),
+    domain: z.string().min(1).max(253),
+    nonce: z.string().min(1).max(128),
+  }),
   ordinalTxid: z.object({ txid: hexId, vout: z.number().int().min(0) }),
 };
 

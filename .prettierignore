@@ -1,0 +1,6 @@
+**/node_modules/**
+**/dist/**
+coverage/
+data/
+# Vendored SmartLedger Login SDK — keep its original style.
+packages/web/public/sl-login.js

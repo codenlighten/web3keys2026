@@ -13,6 +13,7 @@ const { hasRedis, pingRedis } = require('./redis');
 const { metricsMiddleware, metricsHandler } = require('./metrics');
 const { router: apiRouter } = require('./routes');
 const { router: paymailRouter } = require('./paymail');
+const { router: ssoRouter } = require('./sso');
 
 // Static frontend: the built Vite/React app (packages/web/dist). Overridable via WEB_DIR.
 const PUBLIC_DIR = process.env.WEB_DIR || path.join(__dirname, '..', '..', 'web', 'dist');
@@ -91,8 +92,10 @@ function createApp() {
     res.status(ready ? 200 : 503).json({ ready, checks });
   });
 
-  // Paymail (serves /.well-known/bsvalias and /api/paymail/*) and the app API.
+  // Paymail (serves /.well-known/bsvalias and /api/paymail/*), SmartLedger Login SSO
+  // (/api/verify-login etc.), and the app API.
   app.use(paymailRouter);
+  app.use(ssoRouter);
   app.use(apiRouter);
 
   // 404

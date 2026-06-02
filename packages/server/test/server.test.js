@@ -302,6 +302,56 @@ test('Prometheus /metrics endpoint exposes metrics', async () => {
   assert.ok(body.includes('process_cpu') || body.includes('nodejs_'));
 });
 
+test('SmartLedger Login SSO: verify-login → session → revoke; verify-attest', async () => {
+  const { bsv } = require('@web3keys/wallet-core');
+  const priv = new bsv.PrivateKey();
+  const address = priv.toAddress().toString();
+
+  // SLLogin: the wallet would sign this payload with the user's identity key.
+  const challenge = 'nonce-abc';
+  const domain = 'relying.app';
+  const loginPayload = `SmartLedger Wallet sign-in v1\nDomain: ${domain}\nNonce: ${challenge}`;
+  const signature = new bsv.Message(loginPayload).sign(priv);
+
+  const vl = await api('POST', '/api/verify-login', { address, signature, challenge, domain });
+  assert.equal(vl.status, 200);
+  assert.ok(vl.json.valid && vl.json.token && vl.json.exp);
+  assert.equal(vl.json.address, address);
+
+  // a tampered signature is rejected
+  const bad = await api('POST', '/api/verify-login', {
+    address,
+    signature,
+    challenge: 'different',
+    domain,
+  });
+  assert.equal(bad.json.valid, false);
+
+  // session check + revoke
+  const chk = await api('POST', '/api/check-session', { token: vl.json.token });
+  assert.ok(chk.json.valid && chk.json.address === address);
+  await api('POST', '/api/revoke-session', { token: vl.json.token });
+  assert.equal(
+    (await api('POST', '/api/check-session', { token: vl.json.token })).json.valid,
+    false
+  );
+
+  // SLAttest: verify a signature over an arbitrary payload
+  const payload = JSON.stringify({ hello: 'world' });
+  const nonce = 'att-1';
+  const attMsg = `SmartLedger Wallet attest v1\nApp: ${domain}\nDomain: ${domain}\nNonce: ${nonce}\nPayload: ${payload}`;
+  const attSig = new bsv.Message(attMsg).sign(priv);
+  const va = await api('POST', '/api/verify-attest', {
+    address,
+    signature: attSig,
+    payload,
+    domain,
+    nonce,
+  });
+  assert.ok(va.json.valid);
+  assert.equal(va.json.signedMessage, attMsg);
+});
+
 test('duplicate registration is rejected', async () => {
   const { body } = regBody('dupe@example.com', 'password1234');
   assert.equal((await api('POST', '/api/auth/register', body)).status, 201);
