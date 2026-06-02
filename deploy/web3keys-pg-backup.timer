@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily web3keys Postgres backup
+
+[Timer]
+OnCalendar=*-*-* 03:40:00
+Persistent=true
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

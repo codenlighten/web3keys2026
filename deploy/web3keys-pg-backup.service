@@ -1,0 +1,9 @@
+[Unit]
+Description=web3keys Postgres backup (pg_dump -> age -> Spaces)
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/web3keys-pg-backup.sh
+EnvironmentFile=-/etc/web3keys/web3keys.env

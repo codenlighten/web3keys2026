@@ -68,12 +68,12 @@ ln -sf /etc/nginx/sites-available/web3keys /etc/nginx/sites-enabled/web3keys
 rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
 
-echo "==> Installing database backup (daily systemd timer)"
-install -m 0755 "$APP_DIR/deploy/web3keys-backup.sh" /usr/local/bin/web3keys-backup.sh
-cp "$APP_DIR/deploy/web3keys-backup.service" /etc/systemd/system/web3keys-backup.service
-cp "$APP_DIR/deploy/web3keys-backup.timer" /etc/systemd/system/web3keys-backup.timer
+echo "==> Installing Postgres backup (daily systemd timer)"
+install -m 0755 "$APP_DIR/deploy/web3keys-pg-backup.sh" /usr/local/bin/web3keys-pg-backup.sh
+cp "$APP_DIR/deploy/web3keys-pg-backup.service" /etc/systemd/system/web3keys-pg-backup.service
+cp "$APP_DIR/deploy/web3keys-pg-backup.timer" /etc/systemd/system/web3keys-pg-backup.timer
 systemctl daemon-reload
-systemctl enable --now web3keys-backup.timer
+systemctl enable --now web3keys-pg-backup.timer
 
 echo "==> Configuring firewall (ufw): allow SSH + HTTP/HTTPS"
 ufw allow OpenSSH
