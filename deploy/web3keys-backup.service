@@ -1,0 +1,9 @@
+[Unit]
+Description=web3keys database backup
+After=web3keys.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/web3keys-backup.sh
+# EnvironmentFile is optional; defaults in the script match production paths.
+EnvironmentFile=-/etc/web3keys/web3keys.env

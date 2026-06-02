@@ -12,7 +12,7 @@ REPO=https://github.com/codenlighten/web3keys2026.git
 echo "==> Installing base packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y curl ca-certificates gnupg git nginx
+apt-get install -y curl ca-certificates gnupg git nginx sqlite3 ufw
 
 echo "==> Installing Node ${NODE_MAJOR}.x (NodeSource)"
 if ! command -v node >/dev/null || [ "$(node -v | cut -c2 | tr -d v)" != "$NODE_MAJOR" ]; then
@@ -58,6 +58,18 @@ cp "$APP_DIR/deploy/nginx-web3keys.conf" /etc/nginx/sites-available/web3keys
 ln -sf /etc/nginx/sites-available/web3keys /etc/nginx/sites-enabled/web3keys
 rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl reload nginx
+
+echo "==> Installing database backup (daily systemd timer)"
+install -m 0755 "$APP_DIR/deploy/web3keys-backup.sh" /usr/local/bin/web3keys-backup.sh
+cp "$APP_DIR/deploy/web3keys-backup.service" /etc/systemd/system/web3keys-backup.service
+cp "$APP_DIR/deploy/web3keys-backup.timer" /etc/systemd/system/web3keys-backup.timer
+systemctl daemon-reload
+systemctl enable --now web3keys-backup.timer
+
+echo "==> Configuring firewall (ufw): allow SSH + HTTP/HTTPS"
+ufw allow OpenSSH
+ufw allow 'Nginx Full'
+ufw --force enable
 
 cat <<'NOTE'
 
