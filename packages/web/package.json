@@ -2,6 +2,24 @@
   "name": "@web3keys/web",
   "version": "0.2.0",
   "private": true,
-  "description": "web3keys frontend (static SPA; to be rebuilt as Vite+React+TS in Phase 5)",
-  "license": "MIT"
+  "description": "web3keys frontend — Vite + React + TypeScript PWA",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3"
+  }
 }

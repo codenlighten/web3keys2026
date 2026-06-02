@@ -13,9 +13,8 @@ const { hasRedis, pingRedis } = require('./redis');
 const { router: apiRouter } = require('./routes');
 const { router: paymailRouter } = require('./paymail');
 
-// Static frontend lives in the web workspace (packages/web). Overridable via WEB_DIR
-// (e.g. to serve a built React app from packages/web/dist in Phase 5).
-const PUBLIC_DIR = process.env.WEB_DIR || path.join(__dirname, '..', '..', 'web');
+// Static frontend: the built Vite/React app (packages/web/dist). Overridable via WEB_DIR.
+const PUBLIC_DIR = process.env.WEB_DIR || path.join(__dirname, '..', '..', 'web', 'dist');
 
 /** Build the Express app (no listen) — importable for tests. */
 function createApp() {

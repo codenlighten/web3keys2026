@@ -43,9 +43,12 @@ else
   git clone "$REPO" "$APP_DIR"
 fi
 
-echo "==> Installing production dependencies"
+echo "==> Installing dependencies (incl dev — needed to build the frontend)"
 cd "$APP_DIR"
-npm ci --omit=dev || npm install --omit=dev
+npm ci || npm install
+
+echo "==> Building the web frontend (packages/web/dist)"
+npm run build -w @web3keys/web
 chown -R web3keys:web3keys "$APP_DIR"
 
 echo "==> Installing systemd unit"

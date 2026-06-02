@@ -38,7 +38,8 @@ const browserGlobals = {
 };
 
 module.exports = [
-  { ignores: ['**/node_modules/**', '**/dist/**', '**/coverage/**', 'data/**'] },
+  // packages/web is TypeScript/React handled by its own tsc + vite build.
+  { ignores: ['**/node_modules/**', '**/dist/**', '**/coverage/**', 'data/**', 'packages/web/**'] },
   js.configs.recommended,
   {
     files: ['**/*.js'],
