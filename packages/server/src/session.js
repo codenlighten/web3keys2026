@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { config } = require('./config');
 const { getRedis, hasRedis } = require('./redis');
@@ -21,14 +22,16 @@ const ttlSec = Math.floor(config.sessionTtlMs / 1000);
 const skey = (sid) => `sess:${sid}`;
 
 function issueToken(email) {
-  const sid = `${email}:${Date.now()}:${Math.floor(Math.random() * 1e9)}`;
+  // Cryptographically-random session id (the revocation key) — never guessable.
+  const sid = crypto.randomUUID();
   const token = jwt.sign({ email, sid }, config.jwtSecret, { expiresIn: ttlSec });
   return { token, sid };
 }
 
 function verifyToken(token) {
   try {
-    return jwt.verify(token, config.jwtSecret);
+    // Pin the algorithm so a forged token can't downgrade/confuse the verifier.
+    return jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] });
   } catch {
     return null;
   }

@@ -41,8 +41,8 @@ function createApp() {
     );
   }
 
-  // Security headers + CSP. script-src allows the @smartledger/bsv CDN the SPA loads;
-  // tighten further once the React build (Phase 5) bundles its own JS.
+  // Security headers + CSP. script-src allows cdn.jsdelivr.net because the SPA loads the
+  // @smartledger/bsv browser bundle from there for client-side key gen + signing.
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -71,7 +71,17 @@ function createApp() {
     next();
   });
 
-  app.use(cors());
+  // CORS: the SmartLedger Login (SSO) endpoints and paymail discovery are cross-origin by
+  // design — third-party apps/servers call them. The app's own API is same-origin (served
+  // to our own SPA) and needs no CORS. So scope open CORS to just the cross-origin surface
+  // rather than allowing every site to call the whole API on a user's behalf.
+  const crossOrigin = cors();
+  app.use('/.well-known', crossOrigin);
+  app.use('/api/paymail', crossOrigin);
+  app.use(
+    ['/api/verify-login', '/api/check-session', '/api/revoke-session', '/api/verify-attest'],
+    crossOrigin
+  );
   app.use(express.json({ limit: '256kb' }));
   app.use(metricsMiddleware);
 

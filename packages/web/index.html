@@ -2,18 +2,43 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0b1020" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#080c18" />
+    <meta
+      name="description"
+      content="Non-custodial BSV wallet. Your keys never leave your device."
+    />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
-    <title>web3keys — BSV wallet</title>
+    <title>web3keys — non-custodial BSV wallet</title>
     <!-- @smartledger/bsv browser bundle (exposes window.bsv) for client-side key
          generation and transaction signing — keys never leave the browser. -->
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
     <script src="https://cdn.jsdelivr.net/npm/@smartledger/bsv@4.0.1/bsv.min.js"></script>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- Pre-hydration loader so there's no blank flash before React mounts. -->
+    <div id="root">
+      <div style="display: grid; place-items: center; min-height: 60vh">
+        <div class="boot-spin"></div>
+      </div>
+      <style>
+        .boot-spin {
+          width: 26px;
+          height: 26px;
+          border: 2.5px solid #41507d;
+          border-top-color: #7aa6ff;
+          border-radius: 50%;
+          animation: boot-spin 0.7s linear infinite;
+        }
+        @keyframes boot-spin {
+          to {
+            transform: rotate(360deg);
+          }
+        }
+      </style>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

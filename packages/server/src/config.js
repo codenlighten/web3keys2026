@@ -60,7 +60,8 @@ const config = {
   // Optional token to gate GET /metrics (recommended in prod; also restrict via nginx).
   metricsToken: process.env.METRICS_TOKEN || '',
 
-  // scrypt cost parameters (used for password verifier + mnemonic encryption key).
+  // scrypt cost parameters for the account password verifier. (No mnemonic encryption
+  // key — the wallet is non-custodial; the server never derives or stores seed material.)
   scrypt: { N: 16384, r: 8, p: 1, keylen: 32 },
 
   smtp: {

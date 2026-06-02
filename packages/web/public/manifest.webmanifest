@@ -1,11 +1,11 @@
 {
   "name": "web3keys",
   "short_name": "web3keys",
-  "description": "Your keys. Your BSV.",
+  "description": "Non-custodial BSV wallet. Your keys never leave your device.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0b1020",
-  "theme_color": "#0b1020",
+  "background_color": "#080c18",
+  "theme_color": "#080c18",
   "icons": [
     { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ]

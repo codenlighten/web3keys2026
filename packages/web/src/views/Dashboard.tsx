@@ -3,8 +3,10 @@ import QRCode from 'qrcode';
 import { api, type Profile, type Tx, type Notification } from '../api';
 import { buildSignedTx, encryptBackup, identityInfo, buildBapIdTx } from '../wallet';
 import { walletSession } from '../walletSession';
+import { Field } from './ui';
 
 const BSV = (sats: number) => `${(sats / 1e8).toFixed(8)} BSV`;
+const fmtSats = (sats: number) => `${sats.toLocaleString()} sats`;
 
 function Qr({ value }: { value: string }) {
   const [src, setSrc] = useState('');
@@ -14,13 +16,9 @@ function Qr({ value }: { value: string }) {
       .catch(() => setSrc(''));
   }, [value]);
   return src ? (
-    <img
-      src={src}
-      alt="QR"
-      width={180}
-      height={180}
-      style={{ display: 'block', margin: '8px auto', borderRadius: 10 }}
-    />
+    <div className="qr-wrap">
+      <img src={src} alt="Receive address QR code" width={180} height={180} />
+    </div>
   ) : null;
 }
 
@@ -102,20 +100,6 @@ export function Dashboard({ profile, onLogout }: { profile: Profile; onLogout: (
   );
 }
 
-function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="field">
-      <span className="field-label">{label}</span>
-      <div className="field-value">
-        <code>{value}</code>
-        <button className="copy" onClick={() => navigator.clipboard?.writeText(value)}>
-          ⧉
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function Wallet({
   profile,
   balance,
@@ -161,11 +145,10 @@ function Wallet({
 
   return (
     <div>
-      <div className="field">
-        <span className="field-label">Balance</span>
-        <div className="field-value">
-          <strong>{balance === null ? '…' : BSV(balance)}</strong>
-        </div>
+      <div className="hero">
+        <div className="hero-label">Balance</div>
+        <div className="hero-amount">{balance === null ? '—' : BSV(balance)}</div>
+        <div className="hero-sub">{balance === null ? 'Fetching…' : fmtSats(balance)}</div>
       </div>
       <Field label="Paymail" value={profile.paymail} />
       <Field label="Receive address" value={address} />
@@ -173,7 +156,7 @@ function Wallet({
       <button className="ghost" onClick={onRotate}>
         New receive address
       </button>
-      <div className="spacer" />
+      <hr className="divider" />
       <h2>Send</h2>
       <form onSubmit={submit}>
         <label>
@@ -335,7 +318,7 @@ function Settings({
         </>
       )}
 
-      <div className="spacer" />
+      <hr className="divider" />
       <h2>Encrypted cloud backup</h2>
       <p className="muted">
         Optional. Encrypted in your browser under a passphrase we never see — convenience only.
@@ -359,7 +342,7 @@ function Settings({
         <button className="primary">Save encrypted backup</button>
       </form>
 
-      <div className="spacer" />
+      <hr className="divider" />
       <h2>Two-factor auth</h2>
       {!otpauth ? (
         <button className="ghost" onClick={setup2fa}>
@@ -382,9 +365,11 @@ function Settings({
         </form>
       )}
 
-      <div className="spacer" />
+      <hr className="divider" />
       <h2>Recovery phrase</h2>
-      <p className="warn">Reveals your 12 words. Anyone with them controls your funds.</p>
+      <p className="warn">
+        Reveals your recovery phrase. Anyone with these words controls your funds.
+      </p>
       {phrase ? (
         <div className="blob">{phrase}</div>
       ) : (

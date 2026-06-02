@@ -124,6 +124,7 @@ export function Approve({ kind }: { kind: Kind }) {
 
   return (
     <div className="approve">
+      <div className="shield">{kind === 'publish' ? '📡' : '🛡️'}</div>
       <h2>
         {kind === 'login' ? 'Sign in to' : kind === 'attest' ? 'Sign for' : 'Publish from'}{' '}
         <strong>{app}</strong>

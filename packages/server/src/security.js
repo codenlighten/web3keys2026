@@ -5,8 +5,8 @@ const { config } = require('./config');
 
 /**
  * Security primitives for the wallet service: password verifier, scrypt KDF, generic
- * AES-256-GCM, and OTP. Threshold share sealing (S2 under the user's password, S3 under
- * the server master key) is built on these in shares.js.
+ * AES-256-GCM, and OTP. (The wallet is non-custodial — these protect server-owned
+ * secrets like the TOTP 2FA secret, never customer key material.)
  */
 
 const { N, r, p, keylen } = config.scrypt;

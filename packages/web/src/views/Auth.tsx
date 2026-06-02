@@ -18,6 +18,7 @@ export function Auth({ onAuthed }: { onAuthed: (p: Profile) => void }) {
   const [needTotp, setNeedTotp] = useState(false);
   const [mnemonic, setMnemonic] = useState('');
   const [saved, setSaved] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [ok, setOk] = useState('');
@@ -180,14 +181,30 @@ export function Auth({ onAuthed }: { onAuthed: (p: Profile) => void }) {
         </p>
         <div className="blob">{mnemonic}</div>
         <div className="row">
-          <button className="ghost" onClick={() => navigator.clipboard?.writeText(mnemonic)}>
-            Copy
+          <button
+            type="button"
+            className={`ghost${copied ? ' copy done' : ''}`}
+            style={{ flex: 1 }}
+            onClick={async () => {
+              try {
+                await navigator.clipboard?.writeText(mnemonic);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1400);
+              } catch {
+                /* clipboard unavailable */
+              }
+            }}
+          >
+            {copied ? '✓ Copied' : 'Copy phrase'}
           </button>
         </div>
         <div className="spacer" />
-        <label className="muted" style={{ flexDirection: 'row', gap: 8 }}>
-          <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} /> I
-          have written down my recovery phrase{passphrase ? ' and passphrase' : ''}
+        <label className="check">
+          <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />
+          <span>
+            I’ve written down my recovery phrase{passphrase ? ' and passphrase' : ''} and stored it
+            safely
+          </span>
         </label>
         <div className="spacer" />
         <button className="primary" disabled={!saved} onClick={() => go('verify')}>

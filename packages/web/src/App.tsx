@@ -5,6 +5,7 @@ import { Auth } from './views/Auth';
 import { Unlock } from './views/Unlock';
 import { Dashboard } from './views/Dashboard';
 import { Approve } from './views/Approve';
+import { Loading } from './views/ui';
 
 // SmartLedger Login approval routes that sl-login.js redirects third-party users to.
 const SSO_ROUTES: Record<string, 'login' | 'attest' | 'publish'> = {
@@ -45,7 +46,7 @@ export default function App() {
   }
 
   let body;
-  if (loading) body = <p className="muted">Loading…</p>;
+  if (loading) body = <Loading />;
   else if (!profile)
     body = (
       <Auth
@@ -63,13 +64,21 @@ export default function App() {
   return (
     <main className="card">
       <header className="brand">
-        <div style={{ fontSize: 32 }}>🔑</div>
+        <div className="logo">🔑</div>
         <h1>web3keys</h1>
         <p className="tagline">
-          Your keys. Your BSV. {network && <span className="badge">{network}</span>}
+          <span className="badge secure">🔒 Non-custodial</span>
+          {network && <span className="badge">{network}</span>}
         </p>
       </header>
-      {body}
+      <div className="view" key={ssoKind ?? (profile ? (unlocked ? 'dash' : 'unlock') : 'auth')}>
+        {body}
+      </div>
+      <footer className="foot">
+        <span>🔐 Your keys never leave this device</span>
+        <span>·</span>
+        <a href="/sl-login.js">Developers</a>
+      </footer>
     </main>
   );
 }
