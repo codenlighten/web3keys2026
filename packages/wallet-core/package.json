@@ -1,0 +1,17 @@
+{
+  "name": "@web3keys/wallet-core",
+  "version": "0.2.0",
+  "description": "BSV HD wallet core — payments, 1Sat Ordinals, BRC-100 substrate, Shamir threshold helpers",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "bin": {
+    "web3keys": "bin/cli.js"
+  },
+  "scripts": {
+    "test": "node --test 'test/**/*.test.js'"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@smartledger/bsv": "^4.0.1"
+  }
+}

@@ -10,3 +10,9 @@ data/
 *.db
 *.db-wal
 *.db-shm
+
+# build output
+dist/
+build/
+coverage/
+packages/*/dist/

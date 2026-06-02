@@ -8,8 +8,9 @@ Type=simple
 User=web3keys
 Group=web3keys
 WorkingDirectory=/opt/web3keys
-ExecStart=/usr/bin/node /opt/web3keys/server/index.js
+ExecStart=/usr/bin/node /opt/web3keys/packages/server/src/index.js
 EnvironmentFile=/etc/web3keys/web3keys.env
+Environment=WEB_DIR=/opt/web3keys/packages/web
 Restart=on-failure
 RestartSec=3
 

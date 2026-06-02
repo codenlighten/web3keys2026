@@ -1,0 +1,11 @@
+{
+  "name": "@web3keys/shared",
+  "version": "0.2.0",
+  "description": "Shared types, constants, and zod schemas for web3keys server and web",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "license": "MIT",
+  "dependencies": {
+    "zod": "^3.24.1"
+  }
+}

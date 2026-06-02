@@ -1,0 +1,7 @@
+{
+  "name": "@web3keys/web",
+  "version": "0.2.0",
+  "private": true,
+  "description": "web3keys frontend (static SPA; to be rebuilt as Vite+React+TS in Phase 5)",
+  "license": "MIT"
+}

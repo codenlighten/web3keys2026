@@ -1,36 +1,28 @@
 {
-  "name": "web3keys2",
-  "version": "0.1.0",
-  "description": "BSV HD wallet — BSV payments, 1Sat Ordinals, and full BRC-100 substrate, built on @smartledger/bsv",
-  "type": "commonjs",
-  "main": "src/index.js",
-  "bin": {
-    "web3keys": "bin/cli.js"
-  },
-  "scripts": {
-    "test": "node --test 'test/**/*.test.js'",
-    "cli": "node bin/cli.js",
-    "start": "node server/index.js",
-    "server:dev": "NODE_ENV=development node server/index.js"
-  },
-  "keywords": [
-    "bsv",
-    "wallet",
-    "hd-wallet",
-    "ordinals",
-    "1sat",
-    "brc-100",
-    "brc-42",
-    "brc-43"
+  "name": "web3keys",
+  "version": "0.2.0",
+  "private": true,
+  "description": "web3keys — production BSV wallet (threshold custody, paymail, multi-node)",
+  "workspaces": [
+    "packages/shared",
+    "packages/wallet-core",
+    "packages/server",
+    "packages/worker",
+    "packages/web"
   ],
-  "license": "MIT",
-  "dependencies": {
-    "@smartledger/bsv": "^4.0.1",
-    "cors": "^2.8.6",
-    "dotenv": "^17.4.2",
-    "express": "^5.2.1",
-    "express-rate-limit": "^8.5.2",
-    "jsonwebtoken": "^9.0.3",
-    "nodemailer": "^8.0.10"
-  }
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "test:core": "npm run test -w @web3keys/wallet-core",
+    "test:server": "npm run test -w @web3keys/server",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "start": "node packages/server/src/index.js",
+    "server:dev": "NODE_ENV=development node packages/server/src/index.js"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "eslint": "^9.16.0",
+    "prettier": "^3.4.2"
+  },
+  "license": "MIT"
 }

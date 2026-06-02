@@ -1,0 +1,25 @@
+{
+  "name": "@web3keys/server",
+  "version": "0.2.0",
+  "description": "web3keys API server",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "NODE_ENV=development node src/index.js",
+    "test": "node --test 'test/**/*.test.js'"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@web3keys/wallet-core": "*",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
+    "jsonwebtoken": "^9.0.3",
+    "nodemailer": "^8.0.10",
+    "pino": "^9.5.0",
+    "pino-http": "^10.3.0",
+    "zod": "^3.24.1"
+  }
+}
