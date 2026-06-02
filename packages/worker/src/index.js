@@ -8,7 +8,7 @@ const pino = require('pino');
 
 const logger = pino({ base: { service: 'web3keys-worker' } });
 const REDIS_URL = process.env.REDIS_URL;
-const SYNC_INTERVAL_MS = Number(process.env.CHAIN_SYNC_INTERVAL_MS || 60_000);
+const SYNC_INTERVAL_MS = Number(process.env.CHAIN_SYNC_INTERVAL_MS || 300_000);
 
 const QUEUES = ['chain-sync', 'notifications', 'email', 'webhooks'];
 

@@ -28,6 +28,9 @@ const config = {
 
   network: process.env.BSV_NETWORK || 'livenet',
 
+  // Optional WhatsOnChain API key — lifts the chain-provider rate limit (free without).
+  wocApiKey: process.env.WOC_API_KEY || '',
+
   // Postgres connection string. If unset, the server falls back to an in-memory
   // Postgres (pg-mem) — used for tests/local; production MUST set DATABASE_URL.
   databaseUrl: process.env.DATABASE_URL || '',
@@ -76,6 +79,7 @@ const configSchema = z.object({
   domain: z.string().min(1),
   baseUrl: z.string().url(),
   network: z.enum(['livenet', 'testnet']),
+  wocApiKey: z.string(),
   databaseUrl: z.string(),
   redisUrl: z.string(),
   jwtSecret: z.string().min(16),

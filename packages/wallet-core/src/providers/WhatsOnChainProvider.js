@@ -2,18 +2,27 @@
 
 const { ChainProvider } = require('./ChainProvider');
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 /**
  * WhatsOnChain (https://whatsonchain.com) adapter.
  * Uses the public REST API. Pass an apiKey to lift rate limits.
- * Requires global fetch (Node 18+).
+ *
+ * Requests are GLOBALLY throttled (minIntervalMs apart) and retried with exponential
+ * backoff on 429/5xx, so deposit scans + balance/UTXO lookups stay under WoC's free-tier
+ * rate limit instead of getting 429-throttled. Requires global fetch (Node 18+).
  */
 class WhatsOnChainProvider extends ChainProvider {
-  constructor({ network = 'livenet', apiKey, fetchImpl } = {}) {
+  constructor({ network = 'livenet', apiKey, fetchImpl, minIntervalMs, maxRetries = 4 } = {}) {
     super();
     this._network = network;
     const woc = network === 'testnet' ? 'test' : 'main';
     this.base = `https://api.whatsonchain.com/v1/bsv/${woc}`;
     this.apiKey = apiKey;
+    // With an API key WoC allows more; without one, ~3 req/s. Default spacing stays under.
+    this.minIntervalMs = minIntervalMs != null ? minIntervalMs : apiKey ? 120 : 350;
+    this.maxRetries = maxRetries;
+    this._nextSlot = 0;
     this.fetch = fetchImpl || globalThis.fetch;
     if (typeof this.fetch !== 'function') {
       throw new Error('No fetch available; pass opts.fetchImpl or use Node 18+');
@@ -24,8 +33,33 @@ class WhatsOnChainProvider extends ChainProvider {
     return this._network;
   }
 
+  /** Reserve the next evenly-spaced request slot (serializes bursts). */
+  async _throttle() {
+    if (!this.minIntervalMs) return;
+    const now = Date.now();
+    const slot = Math.max(now, this._nextSlot);
+    this._nextSlot = slot + this.minIntervalMs;
+    if (slot > now) await sleep(slot - now);
+  }
+
+  async _fetchRetry(url, init) {
+    for (let attempt = 0; ; attempt++) {
+      await this._throttle();
+      const res = await this.fetch(url, init);
+      if ((res.status === 429 || res.status >= 500) && attempt < this.maxRetries) {
+        const retryAfter = Number(res.headers && res.headers.get && res.headers.get('retry-after'));
+        const delay = retryAfter
+          ? retryAfter * 1000
+          : Math.min(8000, 300 * 2 ** attempt) + Math.floor(Math.random() * 200);
+        await sleep(delay);
+        continue;
+      }
+      return res;
+    }
+  }
+
   async _get(path) {
-    const res = await this.fetch(this.base + path, {
+    const res = await this._fetchRetry(this.base + path, {
       headers: this.apiKey ? { woc_api_key: this.apiKey } : {},
     });
     if (!res.ok) {
@@ -35,7 +69,7 @@ class WhatsOnChainProvider extends ChainProvider {
   }
 
   async _post(path, body) {
-    const res = await this.fetch(this.base + path, {
+    const res = await this._fetchRetry(this.base + path, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',

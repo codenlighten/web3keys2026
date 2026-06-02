@@ -10,22 +10,20 @@ const { logger } = require('./logger');
  * 'deposit' notification. Idempotent: re-running does not duplicate. The provider is
  * injectable for testing (defaults to the shared WhatsOnChain provider).
  */
-async function syncUserDeposits(
-  user,
-  { provider = svc.provider, gapLimit = 20, maxIndex = 200 } = {}
-) {
+async function syncUserDeposits(user, { provider = svc.provider, gap = 5 } = {}) {
+  // Deposits only land on addresses we've handed out (0..receive_index). Scan that
+  // bounded range + a small gap — NOT a fresh 20-address gap-limit walk every cycle —
+  // to keep the chain-provider request volume low and avoid rate limiting.
+  const maxIndex = (Number(user.receive_index) || 0) + gap;
   const seen = await db.incomingOutpoints(user.id);
   const created = [];
-  let empty = 0;
-  for (let i = 0; i <= maxIndex && empty < gapLimit; i++) {
+  for (let i = 0; i <= maxIndex; i++) {
     const address = svc.depositAddress(user, i);
 
     const utxos = await provider.getUtxos(address);
     if (!utxos.length) {
-      empty += 1;
       continue;
     }
-    empty = 0;
     for (const u of utxos) {
       const key = `${u.txid}:${u.vout}`;
       if (seen.has(key)) continue;

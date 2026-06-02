@@ -192,7 +192,9 @@ async function incomingOutpoints(userId) {
 }
 
 async function listUsers() {
-  const { rows } = await query('SELECT id, email, finance_xpub FROM users WHERE verified = TRUE');
+  const { rows } = await query(
+    'SELECT id, email, finance_xpub, receive_index FROM users WHERE verified = TRUE'
+  );
   return rows;
 }
 

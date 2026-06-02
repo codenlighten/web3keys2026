@@ -203,13 +203,13 @@ test('chain sync detects deposits → notification + history (idempotent)', asyn
 
   const provider = new MockProvider();
   provider.seedUtxo(svc.depositAddress(user, 0), { satoshis: 5000 });
-  assert.equal((await chainsync.syncUserDeposits(user, { provider, gapLimit: 5 })).length, 1);
+  assert.equal((await chainsync.syncUserDeposits(user, { provider })).length, 1);
 
   const notifs = await api('GET', '/api/notifications', null, token);
   assert.equal(notifs.json.notifications[0].type, 'deposit');
   const hist = await api('GET', '/api/wallet/history', null, token);
   assert.ok(hist.json.transactions.some((t) => t.direction === 'in' && t.amountSats === 5000));
-  assert.equal((await chainsync.syncUserDeposits(user, { provider, gapLimit: 5 })).length, 0);
+  assert.equal((await chainsync.syncUserDeposits(user, { provider })).length, 0);
 });
 
 test('TOTP 2FA: setup → enable → enforced at login', async () => {

@@ -16,7 +16,7 @@ const { sendOtpEmail } = require('./mailer');
  * broadcasting client-signed transactions.
  */
 
-const provider = new WhatsOnChainProvider({ network: config.network });
+const provider = new WhatsOnChainProvider({ network: config.network, apiKey: config.wocApiKey });
 const paymailClient = makeClient();
 
 function net() {
