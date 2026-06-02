@@ -1,8 +1,9 @@
 'use strict';
 
 // Load .env (if present) without overriding vars already set in the environment.
+// In production, env comes from systemd's EnvironmentFile; dotenv is a dev convenience.
 try {
-  require('dotenv').config();
+  require('dotenv').config({ quiet: true });
 } catch {
   /* dotenv optional */
 }
