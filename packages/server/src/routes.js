@@ -192,8 +192,21 @@ router.get('/api/wallet/profile', authed, (req, res) => {
 });
 
 router.get('/api/wallet/address', authed, (req, res) => {
-  res.json({ address: svc.depositAddress(req.user), paymail: svc.publicProfile(req.user).paymail });
+  res.json({
+    address: svc.receiveAddress(req.user),
+    index: req.user.receive_index || 0,
+    paymail: svc.publicProfile(req.user).paymail,
+  });
 });
+
+// Rotate to a fresh receive address (privacy; funds at any prior address remain spendable).
+router.post(
+  '/api/wallet/address/new',
+  authed,
+  h(async (req, res) => {
+    res.json(await svc.rotateReceiveAddress(req.user));
+  })
+);
 
 router.get(
   '/api/wallet/balance',

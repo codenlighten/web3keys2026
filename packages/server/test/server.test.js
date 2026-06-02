@@ -277,6 +277,27 @@ test('TOTP 2FA: setup → enable → enforced at login', async () => {
   assert.ok(ok.json.token);
 });
 
+test('receive address rotates (HD), distinct valid addresses', async () => {
+  const email = 'rita@example.com';
+  const password = 'password1234';
+  const token = await registerLogin(email, password);
+
+  const a0 = await api('GET', '/api/wallet/address', null, token);
+  assert.equal(a0.status, 200);
+  assert.equal(a0.json.index, 0);
+  assert.ok(/^1[1-9A-HJ-NP-Za-km-z]+$/.test(a0.json.address));
+
+  const rotated = await api('POST', '/api/wallet/address/new', null, token);
+  assert.equal(rotated.status, 200);
+  assert.equal(rotated.json.index, 1);
+  assert.notEqual(rotated.json.address, a0.json.address);
+
+  // subsequent GET reflects the advanced index
+  const a1 = await api('GET', '/api/wallet/address', null, token);
+  assert.equal(a1.json.index, 1);
+  assert.equal(a1.json.address, rotated.json.address);
+});
+
 test('account lockout after repeated failed logins (429)', async () => {
   const email = 'liam@example.com';
   const password = 'password1234';

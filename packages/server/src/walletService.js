@@ -41,16 +41,47 @@ async function uniqueAlias(email) {
   return alias;
 }
 
-/** Public deposit address for a stored user (derived from the public finance xpub). */
-function depositAddress(user) {
-  const hpub = bsv.HDPublicKey.fromString(user.finance_xpub);
-  return hpub
+function net() {
+  return provider.network === 'testnet' ? bsv.Networks.testnet : bsv.Networks.livenet;
+}
+
+/** Derive a receive address from the PUBLIC finance xpub at change 0 / index (no seed). */
+function deriveFromXpub(xpub, index) {
+  return bsv.HDPublicKey.fromString(xpub)
     .deriveChild(0)
-    .deriveChild(0)
-    .publicKey.toAddress(
-      provider.network === 'testnet' ? bsv.Networks.testnet : bsv.Networks.livenet
-    )
+    .deriveChild(index)
+    .publicKey.toAddress(net())
     .toString();
+}
+
+/** Public deposit address for a stored user (default index 0). */
+function depositAddress(user, index = 0) {
+  return deriveFromXpub(user.finance_xpub, index);
+}
+
+/** The user's current rotating receive address (at their stored receive_index). */
+function receiveAddress(user) {
+  return deriveFromXpub(user.finance_xpub, user.receive_index || 0);
+}
+
+/**
+ * Read-only balance by scanning addresses derived from the public finance xpub (gap
+ * limit). Works without the seed — only the xpub is needed.
+ */
+async function scanXpubSatoshis(user, { gapLimit = 20, maxIndex = 500 } = {}) {
+  let total = 0;
+  let empty = 0;
+  for (let i = 0; i <= maxIndex && empty < gapLimit; i++) {
+    // eslint-disable-next-line no-await-in-loop
+    const utxos = await provider.getUtxos(deriveFromXpub(user.finance_xpub, i));
+    if (!utxos.length) {
+      empty += 1;
+      continue;
+    }
+    empty = 0;
+    total += utxos.reduce((s, u) => s + u.satoshis, 0);
+  }
+  return total;
 }
 
 function publicProfile(user) {
@@ -214,7 +245,14 @@ async function recover({ email, recoveryShare, newPassword }) {
 }
 
 async function getBalance(user) {
-  return provider.getBalance(depositAddress(user));
+  const confirmed = await scanXpubSatoshis(user);
+  return { confirmed, unconfirmed: 0 };
+}
+
+/** Advance the user's rotating receive address and return the new one. */
+async function rotateReceiveAddress(user) {
+  const index = await db.bumpReceiveIndex(user.email);
+  return { address: deriveFromXpub(user.finance_xpub, index), index };
 }
 
 /**
@@ -244,12 +282,17 @@ async function resolveRecipient(to) {
   return to;
 }
 
-/** Send BSV from an unlocked session wallet. amount in satoshis. */
+/**
+ * Send BSV from an unlocked session wallet, gathering UTXOs across ALL the finance
+ * account's funded addresses (not just index 0). amount in satoshis.
+ */
 async function send(wallet, { to, satoshis }) {
   const address = await resolveRecipient(to);
   const amt = Number(satoshis);
   if (!Number.isInteger(amt) || amt <= 0) throw new ServiceError('Invalid amount', 400);
-  const result = await wallet.send([{ to: address, satoshis: amt }]);
+  const result = await wallet.sendFromAccount([{ to: address, satoshis: amt }], {
+    account: 'finance',
+  });
   return { txid: result.broadcastTxid || result.txid, fee: result.fee, to: address, satoshis: amt };
 }
 
@@ -264,6 +307,8 @@ module.exports = {
   send,
   publicProfile,
   depositAddress,
+  receiveAddress,
+  rotateReceiveAddress,
   resolveRecipient,
   issueOtp,
 };

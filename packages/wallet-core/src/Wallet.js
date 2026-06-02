@@ -1,5 +1,6 @@
 'use strict';
 
+const bsv = require('@smartledger/bsv');
 const { KeyManager } = require('./KeyManager');
 const { Identity } = require('./identity/Identity');
 const { BRC100Wallet } = require('./brc100/BRC100Wallet');
@@ -93,6 +94,71 @@ class Wallet {
       outputs,
       changeAddress: fundingAddress,
       privateKeys: fundingKey,
+      feePerKb: opts.feePerKb || this.feePerKb,
+    });
+
+    if (opts.broadcast !== false) {
+      built.broadcastTxid = await this.provider.broadcast(built.rawHex);
+    }
+    return built;
+  }
+
+  // ───────────────────────── HD multi-address (gap-limit scan) ─────────────────────────
+
+  /**
+   * Scan derived addresses of an account for UTXOs until `gapLimit` consecutive empty
+   * addresses are seen (BIP-44 gap limit). Each returned UTXO carries its owning address,
+   * private key, and a reconstructed P2PKH script (so providers that omit scripts work).
+   */
+  async scanUtxos(account = 'finance', { gapLimit = 20, change = 0, maxIndex = 5000 } = {}) {
+    this._requireProvider();
+    const net = this.keyManager.network;
+    const found = [];
+    let consecutiveEmpty = 0;
+    for (let index = 0; index <= maxIndex && consecutiveEmpty < gapLimit; index++) {
+      const priv = this.keyManager.privateKey(account, { change, index });
+      const address = priv.toAddress(net).toString();
+      // eslint-disable-next-line no-await-in-loop
+      const utxos = await this.provider.getUtxos(address);
+      if (!utxos.length) {
+        consecutiveEmpty += 1;
+        continue;
+      }
+      consecutiveEmpty = 0;
+      const script = bsv.Script.buildPublicKeyHashOut(priv.toAddress(net)).toHex();
+      for (const u of utxos) {
+        found.push({ ...u, script: u.script || script, address, privateKey: priv, index });
+      }
+    }
+    return found;
+  }
+
+  /** Total spendable balance across an account's scanned addresses (satoshis). */
+  async accountBalance(account = 'finance', opts = {}) {
+    const utxos = await this.scanUtxos(account, opts);
+    return utxos.reduce((s, u) => s + u.satoshis, 0);
+  }
+
+  /**
+   * Send BSV gathering UTXOs across ALL funded addresses of an account (not just index 0),
+   * signing each input with its own key. Change returns to `changeAddress` (default: the
+   * account's index-0 address).
+   */
+  async sendFromAccount(outputs, opts = {}) {
+    this._requireProvider();
+    const account = opts.account || 'finance';
+    const scanned = await this.scanUtxos(account, { gapLimit: opts.gapLimit || 20 });
+    if (!scanned.length) throw new Error(`No spendable UTXOs in the ${account} account`);
+
+    // Distinct signing keys for the funded addresses (bsv matches each key to its inputs).
+    const keys = [...new Map(scanned.map((u) => [u.address, u.privateKey])).values()];
+    const utxos = scanned.map(({ privateKey, address, index, ...u }) => u); // provider shape w/ script
+
+    const built = buildPayment({
+      utxos,
+      outputs,
+      changeAddress: opts.changeAddress || this.keyManager.address(account),
+      privateKeys: keys,
       feePerKb: opts.feePerKb || this.feePerKb,
     });
 
