@@ -145,9 +145,17 @@ async function deleteOtp(email, purpose) {
 
 async function insertTransaction(t) {
   return one(
-    `INSERT INTO transactions (txid, user_id, direction, amount_sats, address, status)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-    [t.txid, t.userId || null, t.direction, t.amountSats, t.address || null, t.status || 'pending']
+    `INSERT INTO transactions (txid, user_id, direction, amount_sats, address, status, vout)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [
+      t.txid,
+      t.userId || null,
+      t.direction,
+      t.amountSats,
+      t.address || null,
+      t.status || 'pending',
+      t.vout ?? null,
+    ]
   );
 }
 
@@ -161,9 +169,57 @@ async function listTransactions(userId, { limit = 50 } = {}) {
     direction: r.direction,
     amountSats: Number(r.amount_sats),
     address: r.address,
+    vout: r.vout,
     status: r.status,
     createdAt: r.created_at,
   }));
+}
+
+/** Set of "txid:vout" already recorded as incoming for a user (deposit dedup). */
+async function incomingOutpoints(userId) {
+  const { rows } = await query(
+    "SELECT txid, vout FROM transactions WHERE user_id = $1 AND direction = 'in'",
+    [userId]
+  );
+  return new Set(rows.map((r) => `${r.txid}:${r.vout}`));
+}
+
+async function listUsers() {
+  const { rows } = await query('SELECT id, email, finance_xpub FROM users WHERE verified = TRUE');
+  return rows;
+}
+
+// ── notifications ────────────────────────────────────────────────────────────
+
+async function insertNotification(n) {
+  return one('INSERT INTO notifications (user_id, type, payload) VALUES ($1,$2,$3) RETURNING *', [
+    n.userId,
+    n.type,
+    n.payload ? JSON.stringify(n.payload) : null,
+  ]);
+}
+
+async function listNotifications(userId, { unreadOnly = false, limit = 100 } = {}) {
+  const { rows } = await query(
+    `SELECT * FROM notifications WHERE user_id = $1 ${unreadOnly ? 'AND read = FALSE' : ''}
+       ORDER BY created_at DESC, id DESC LIMIT $2`,
+    [userId, limit]
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    type: r.type,
+    payload: typeof r.payload === 'string' ? JSON.parse(r.payload) : r.payload,
+    read: r.read,
+    createdAt: r.created_at,
+  }));
+}
+
+async function markNotificationRead(userId, id) {
+  const { rowCount } = await query(
+    'UPDATE notifications SET read = TRUE WHERE user_id = $1 AND id = $2',
+    [userId, id]
+  );
+  return rowCount > 0;
 }
 
 // ── audit log ─────────────────────────────────────────────────────────────────
@@ -192,6 +248,11 @@ module.exports = {
   getTtpShare,
   insertTransaction,
   listTransactions,
+  incomingOutpoints,
+  listUsers,
+  insertNotification,
+  listNotifications,
+  markNotificationRead,
   upsertOtp,
   getOtp,
   incrementOtpAttempts,

@@ -257,6 +257,26 @@ router.get(
   })
 );
 
+// ── notifications (incoming deposits, etc.) ─────────────────────────────────────
+
+router.get(
+  '/api/notifications',
+  authed,
+  h(async (req, res) => {
+    const unreadOnly = req.query.unread === 'true';
+    res.json({ notifications: await db.listNotifications(req.user.id, { unreadOnly }) });
+  })
+);
+
+router.post(
+  '/api/notifications/:id/read',
+  authed,
+  h(async (req, res) => {
+    const ok = await db.markNotificationRead(req.user.id, Number(req.params.id));
+    res.json({ ok });
+  })
+);
+
 // ── ordinals (1Sat) ──────────────────────────────────────────────────────────
 
 const requireWallet = (req) => {

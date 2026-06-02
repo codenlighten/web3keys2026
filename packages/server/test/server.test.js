@@ -324,6 +324,42 @@ test('transaction history lists a user’s transactions', async () => {
   assert.equal(hist.json.transactions[0].direction, 'out');
 });
 
+test('chain sync detects deposits → records tx + notification (idempotent)', async () => {
+  const { MockProvider } = require('../../wallet-core/test/helpers/MockProvider');
+  const chainsync = require('../src/chainsync');
+  const svc = require('../src/walletService');
+
+  const email = 'deb@example.com';
+  const token = await registerLogin(email, 'password1234');
+  const user = await db.findByEmail(email);
+
+  // seed a deposit at the user's index-0 deposit address
+  const provider = new MockProvider();
+  provider.seedUtxo(svc.depositAddress(user, 0), { satoshis: 5000 });
+
+  const created = await chainsync.syncUserDeposits(user, { provider, gapLimit: 5 });
+  assert.equal(created.length, 1);
+
+  // surfaced via notifications + history
+  const notifs = await api('GET', '/api/notifications', null, token);
+  assert.equal(notifs.json.notifications.length, 1);
+  assert.equal(notifs.json.notifications[0].type, 'deposit');
+  assert.equal(notifs.json.notifications[0].payload.satoshis, 5000);
+
+  const hist = await api('GET', '/api/wallet/history', null, token);
+  assert.ok(hist.json.transactions.some((t) => t.direction === 'in' && t.amountSats === 5000));
+
+  // idempotent: a second pass over the same deposit creates nothing new
+  const again = await chainsync.syncUserDeposits(user, { provider, gapLimit: 5 });
+  assert.equal(again.length, 0);
+
+  // mark read
+  const id = notifs.json.notifications[0].id;
+  assert.equal((await api('POST', `/api/notifications/${id}/read`, null, token)).status, 200);
+  const unread = await api('GET', '/api/notifications?unread=true', null, token);
+  assert.equal(unread.json.notifications.length, 0);
+});
+
 test('ordinals endpoints require auth and validate input', async () => {
   // unauthenticated
   assert.equal((await api('GET', '/api/ordinals')).status, 401);

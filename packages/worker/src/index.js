@@ -8,10 +8,44 @@ const pino = require('pino');
 
 const logger = pino({ base: { service: 'web3keys-worker' } });
 const REDIS_URL = process.env.REDIS_URL;
+const SYNC_INTERVAL_MS = Number(process.env.CHAIN_SYNC_INTERVAL_MS || 60_000);
 
 const QUEUES = ['chain-sync', 'notifications', 'email', 'webhooks'];
 
+// Poll the chain for new deposits across all users (requires DATABASE_URL). Each pass
+// records 'in' transactions + 'deposit' notifications; idempotent.
+function startDepositSync() {
+  if (!process.env.DATABASE_URL) {
+    logger.warn('DATABASE_URL not set — deposit sync disabled');
+    return;
+  }
+  const { migrate } = require('@web3keys/server/src/db/migrate');
+  const chainsync = require('@web3keys/server/src/chainsync');
+  let running = false;
+  const tick = async () => {
+    if (running) return;
+    running = true;
+    try {
+      const n = await chainsync.syncAll();
+      if (n) logger.info({ newDeposits: n }, 'deposit sync pass');
+    } catch (err) {
+      logger.error({ err }, 'deposit sync error');
+    } finally {
+      running = false;
+    }
+  };
+  migrate()
+    .then(() => {
+      const timer = setInterval(tick, SYNC_INTERVAL_MS);
+      timer.unref();
+      tick();
+      logger.info({ intervalMs: SYNC_INTERVAL_MS }, 'deposit sync started');
+    })
+    .catch((err) => logger.error({ err }, 'migrate failed; deposit sync not started'));
+}
+
 async function main() {
+  startDepositSync();
   if (!REDIS_URL) {
     logger.warn(
       'REDIS_URL not set — worker cannot run BullMQ; idling. Set REDIS_URL in production.'
