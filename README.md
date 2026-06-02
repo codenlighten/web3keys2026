@@ -190,6 +190,34 @@ certbot --nginx -d web3keys.com -d www.web3keys.com --redirect
 `deploy/deploy.sh` redeploys latest code on an already-provisioned box.
 TLS requires the domain's A records to point at the droplet first.
 
+### Backups
+
+`deploy/web3keys-backup.sh` (run daily by `web3keys-backup.timer`) takes a WAL-safe
+SQLite snapshot, integrity-checks it, optionally **encrypts it client-side with age**,
+and optionally syncs it **off-site to DigitalOcean Spaces** (private ACL). Retention is
+14 days, local and remote.
+
+Encryption is asymmetric: the server holds only the age **public** recipient
+(`BACKUP_AGE_RECIPIENT`) and cannot decrypt its own backups — the private identity lives
+off-box. Generate it on a trusted machine (not the server):
+
+```bash
+age-keygen -o backup-identity.txt          # keep this file OFF the server
+age-keygen -y backup-identity.txt          # prints the recipient -> BACKUP_AGE_RECIPIENT
+```
+
+Restore (needs the off-box identity):
+
+```bash
+# fetch a blob (from the droplet or Spaces), then:
+age -d -i backup-identity.txt web3keys-<TS>.db.gz.age | gunzip > web3keys.db
+install -o web3keys -g web3keys -m600 web3keys.db /var/lib/web3keys/web3keys.db
+systemctl restart web3keys
+```
+
+If `BACKUP_AGE_RECIPIENT` is unset the blob is plain gzip; if `DO_SPACES_*` is unset it
+stays local only.
+
 ## Pluggable providers
 
 Implement `ChainProvider` to back the wallet with any data source (a node,
