@@ -7,9 +7,9 @@ const db = require('./db');
 const session = require('./session');
 const { createApp } = require('./app');
 
-function main() {
+async function main() {
   assertProductionConfig();
-  db.init();
+  await db.init(); // run migrations
   session.startReaper();
 
   const app = createApp();
@@ -29,4 +29,7 @@ function main() {
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-main();
+main().catch((err) => {
+  logger.error({ err }, 'fatal startup error');
+  process.exit(1);
+});

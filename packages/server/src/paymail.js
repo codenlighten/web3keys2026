@@ -23,13 +23,16 @@ const CAP = {
   publicProfile: 'f12f968c92d6',
 };
 
-function lookup(paymail) {
+async function lookup(paymail) {
   const [alias, domain] = String(paymail || '')
     .toLowerCase()
     .split('@');
   if (!alias || domain !== config.domain.toLowerCase()) return null;
   return db.findByAlias(alias);
 }
+
+/** Wrap async route handlers so rejections reach the error middleware. */
+const h = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // Capability discovery document.
 router.get('/.well-known/bsvalias', (req, res) => {
@@ -45,30 +48,39 @@ router.get('/.well-known/bsvalias', (req, res) => {
 });
 
 // PKI: identity public key for a handle.
-router.get('/api/paymail/id/:paymail', (req, res) => {
-  const user = lookup(req.params.paymail);
-  if (!user) return res.status(404).json({ error: 'paymail not found' });
-  res.json({
-    bsvalias: '1.0',
-    handle: req.params.paymail.toLowerCase(),
-    pubkey: user.identity_pubkey,
-  });
-});
+router.get(
+  '/api/paymail/id/:paymail',
+  h(async (req, res) => {
+    const user = await lookup(req.params.paymail);
+    if (!user) return res.status(404).json({ error: 'paymail not found' });
+    res.json({
+      bsvalias: '1.0',
+      handle: req.params.paymail.toLowerCase(),
+      pubkey: user.identity_pubkey,
+    });
+  })
+);
 
 // Public profile.
-router.get('/api/paymail/public-profile/:paymail', (req, res) => {
-  const user = lookup(req.params.paymail);
-  if (!user) return res.status(404).json({ error: 'paymail not found' });
-  res.json({ name: user.alias, avatar: '' });
-});
+router.get(
+  '/api/paymail/public-profile/:paymail',
+  h(async (req, res) => {
+    const user = await lookup(req.params.paymail);
+    if (!user) return res.status(404).json({ error: 'paymail not found' });
+    res.json({ name: user.alias, avatar: '' });
+  })
+);
 
 // Payment destination: return a P2PKH locking script for the recipient.
-router.post('/api/paymail/address/:paymail', (req, res) => {
-  const user = lookup(req.params.paymail);
-  if (!user) return res.status(404).json({ error: 'paymail not found' });
-  const address = svc.depositAddress(user);
-  const script = bsv.Script.buildPublicKeyHashOut(new bsv.Address(address)).toHex();
-  res.json({ output: script });
-});
+router.post(
+  '/api/paymail/address/:paymail',
+  h(async (req, res) => {
+    const user = await lookup(req.params.paymail);
+    if (!user) return res.status(404).json({ error: 'paymail not found' });
+    const address = svc.depositAddress(user);
+    const script = bsv.Script.buildPublicKeyHashOut(new bsv.Address(address)).toHex();
+    res.json({ output: script });
+  })
+);
 
 module.exports = { router, CAP };

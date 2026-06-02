@@ -34,11 +34,12 @@ function sanitizeAlias(email) {
   );
 }
 
-function uniqueAlias(email) {
+async function uniqueAlias(email) {
   const base = sanitizeAlias(email);
   let alias = base;
   let n = 0;
-  while (db.findByAlias(alias)) {
+
+  while (await db.findByAlias(alias)) {
     n += 1;
     alias = `${base}${n}`;
   }
@@ -70,7 +71,7 @@ function publicProfile(user) {
 
 async function issueOtp(email, purpose) {
   const code = security.generateOtp();
-  db.upsertOtp({
+  await db.upsertOtp({
     email,
     purpose,
     codeHash: security.hashOtp(code),
@@ -87,7 +88,7 @@ async function register({ email, password }) {
   if (!password || String(password).length < 8) {
     throw new ServiceError('Password must be at least 8 characters');
   }
-  if (db.findByEmail(email)) throw new ServiceError('Email already registered', 409);
+  if (await db.findByEmail(email)) throw new ServiceError('Email already registered', 409);
 
   // Generate the wallet and seal its mnemonic with the user's password.
   const wallet = Wallet.generate({ network: config.network });
@@ -95,8 +96,8 @@ async function register({ email, password }) {
   const sealed = security.encryptMnemonic(mnemonic, password);
   const described = wallet.keyManager.describe();
 
-  const alias = uniqueAlias(email);
-  db.createUser({
+  const alias = await uniqueAlias(email);
+  await db.createUser({
     email,
     alias,
     passwordVerifier: security.hashPassword(password),
@@ -111,7 +112,7 @@ async function register({ email, password }) {
 
   await issueOtp(email, 'register');
 
-  const user = db.findByEmail(email);
+  const user = await db.findByEmail(email);
   // The mnemonic is returned exactly once, here, for the user to back up. Never stored
   // or logged in plaintext, and never returned again.
   return {
@@ -122,38 +123,38 @@ async function register({ email, password }) {
   };
 }
 
-function verifyRegistration({ email, code }) {
+async function verifyRegistration({ email, code }) {
   email = String(email || '')
     .trim()
     .toLowerCase();
-  const otp = db.getOtp(email, 'register');
+  const otp = await db.getOtp(email, 'register');
   if (!otp) throw new ServiceError('No pending verification', 404);
   if (Date.now() > otp.expires_at) {
-    db.deleteOtp(email, 'register');
+    await db.deleteOtp(email, 'register');
     throw new ServiceError('Code expired', 410);
   }
   if (otp.attempts >= 5) {
-    db.deleteOtp(email, 'register');
+    await db.deleteOtp(email, 'register');
     throw new ServiceError('Too many attempts', 429);
   }
   if (security.hashOtp(String(code)) !== otp.code_hash) {
-    db.incrementOtpAttempts(email, 'register');
+    await db.incrementOtpAttempts(email, 'register');
     throw new ServiceError('Invalid code', 401);
   }
-  db.setVerified(email);
-  db.deleteOtp(email, 'register');
-  return publicProfile(db.findByEmail(email));
+  await db.setVerified(email);
+  await db.deleteOtp(email, 'register');
+  return publicProfile(await db.findByEmail(email));
 }
 
 /**
  * Authenticate and UNLOCK: verifies the password, decrypts the mnemonic, and returns a
  * live Wallet instance (with provider) plus the user row. Throws on bad credentials.
  */
-function unlock({ email, password }) {
+async function unlock({ email, password }) {
   email = String(email || '')
     .trim()
     .toLowerCase();
-  const user = db.findByEmail(email);
+  const user = await db.findByEmail(email);
   if (!user) throw new ServiceError('Invalid credentials', 401);
   if (!user.verified) throw new ServiceError('Email not verified', 403);
   if (!security.verifyPassword(password, user.password_verifier)) {
@@ -186,7 +187,7 @@ async function getBalance(user) {
  * Local paymail (user@thisdomain) resolves from the DB; external paymail is not yet
  * supported in v1.
  */
-function resolveRecipient(to) {
+async function resolveRecipient(to) {
   to = String(to || '').trim();
   if (/^[^@\s]+@[^@\s]+$/.test(to)) {
     const [alias, domain] = to.split('@');
@@ -196,7 +197,7 @@ function resolveRecipient(to) {
         422
       );
     }
-    const u = db.findByAlias(alias.toLowerCase());
+    const u = await db.findByAlias(alias.toLowerCase());
     if (!u) throw new ServiceError(`Unknown paymail ${to}`, 404);
     return depositAddress(u);
   }
@@ -210,7 +211,7 @@ function resolveRecipient(to) {
 
 /** Send BSV from an unlocked session wallet. amount in satoshis. */
 async function send(wallet, { to, satoshis }) {
-  const address = resolveRecipient(to);
+  const address = await resolveRecipient(to);
   const amt = Number(satoshis);
   if (!Number.isInteger(amt) || amt <= 0) throw new ServiceError('Invalid amount', 400);
   const result = await wallet.send([{ to: address, satoshis: amt }]);

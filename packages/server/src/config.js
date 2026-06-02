@@ -28,8 +28,13 @@ const config = {
 
   network: process.env.BSV_NETWORK || 'livenet',
 
-  // SQLite database file.
-  dbFile: process.env.DB_FILE || './data/web3keys.db',
+  // Postgres connection string. If unset, the server falls back to an in-memory
+  // Postgres (pg-mem) — used for tests/local; production MUST set DATABASE_URL.
+  databaseUrl: process.env.DATABASE_URL || '',
+
+  // Redis connection string for sessions, shared rate-limiting, cache, and the job
+  // queue. If unset, the server falls back to in-memory equivalents (single-node only).
+  redisUrl: process.env.REDIS_URL || '',
 
   // Session signing. In production this MUST be set; a random ephemeral secret in dev
   // means tokens are invalidated on restart (acceptable for local work).
@@ -58,7 +63,8 @@ const configSchema = z.object({
   domain: z.string().min(1),
   baseUrl: z.string().url(),
   network: z.enum(['livenet', 'testnet']),
-  dbFile: z.string().min(1),
+  databaseUrl: z.string(),
+  redisUrl: z.string(),
   jwtSecret: z.string().min(16),
   sessionTtlMs: z.number().int().positive(),
   otpTtlMs: z.number().int().positive(),
@@ -88,6 +94,8 @@ function assertProductionConfig() {
   if (!config.isProd) return;
   const missing = [];
   if (!process.env.JWT_SECRET) missing.push('JWT_SECRET');
+  if (!config.databaseUrl) missing.push('DATABASE_URL');
+  if (!config.redisUrl) missing.push('REDIS_URL');
   if (!config.smtp.host || !config.smtp.user || !config.smtp.pass)
     missing.push('SMTP_HOST/SMTP_USER/SMTP_PASS(WORD)');
   if (missing.length) {

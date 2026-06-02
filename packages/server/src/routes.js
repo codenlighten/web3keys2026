@@ -5,15 +5,21 @@ const rateLimit = require('express-rate-limit');
 const db = require('./db');
 const svc = require('./walletService');
 const session = require('./session');
+const { getRedis, hasRedis } = require('./redis');
 
 const router = express.Router();
 
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
-});
+// Shared, cross-node rate limiting via Redis when configured; in-memory otherwise.
+function makeLimiter(opts) {
+  const cfg = { standardHeaders: true, legacyHeaders: false, ...opts };
+  if (hasRedis()) {
+    const { default: RedisStore } = require('rate-limit-redis');
+    cfg.store = new RedisStore({ sendCommand: (...args) => getRedis().call(...args) });
+  }
+  return rateLimit(cfg);
+}
+
+const authLimiter = makeLimiter({ windowMs: 15 * 60 * 1000, max: 30 });
 
 /** Wrap async handlers so rejections hit the error middleware. */
 const h = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -35,7 +41,7 @@ router.post(
   authLimiter,
   h(async (req, res) => {
     const { email, code } = req.body || {};
-    const profile = svc.verifyRegistration({ email, code });
+    const profile = await svc.verifyRegistration({ email, code });
     res.json({ verified: true, profile });
   })
 );
@@ -47,7 +53,7 @@ router.post(
     const email = String((req.body || {}).email || '')
       .trim()
       .toLowerCase();
-    if (db.findByEmail(email)) await svc.issueOtp(email, 'register');
+    if (await db.findByEmail(email)) await svc.issueOtp(email, 'register');
     res.json({ otpSent: true }); // do not leak whether the email exists
   })
 );
@@ -57,8 +63,9 @@ router.post(
   authLimiter,
   h(async (req, res) => {
     const { email, password } = req.body || {};
-    const { user, wallet } = svc.unlock({ email, password });
+    const { user, wallet } = await svc.unlock({ email, password });
     const { token, sid } = session.issueToken(user.email);
+    await session.createSession(sid, user.email);
     session.putWallet(sid, user.email, wallet);
     res.json({ token, profile: svc.publicProfile(user) });
   })
@@ -66,21 +73,28 @@ router.post(
 
 // ── authenticated middleware ──────────────────────────────────────────────────
 
-function authed(req, res, next) {
+const authed = h(async (req, res, next) => {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   const claims = token && session.verifyToken(token);
   if (!claims) return res.status(401).json({ error: 'unauthorized' });
+  // The JWT is only honoured while its session record exists (enables revocation).
+  const rec = await session.getSession(claims.sid);
+  if (!rec) return res.status(401).json({ error: 'session revoked or expired' });
   req.claims = claims;
-  req.user = db.findByEmail(claims.email);
+  req.user = await db.findByEmail(claims.email);
   if (!req.user) return res.status(401).json({ error: 'unauthorized' });
   next();
-}
-
-router.post('/api/auth/logout', authed, (req, res) => {
-  session.clear(req.claims.sid);
-  res.json({ ok: true });
 });
+
+router.post(
+  '/api/auth/logout',
+  authed,
+  h(async (req, res) => {
+    await session.revokeSession(req.claims.sid);
+    res.json({ ok: true });
+  })
+);
 
 // ── wallet ────────────────────────────────────────────────────────────────────
 

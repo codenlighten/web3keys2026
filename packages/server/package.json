@@ -12,14 +12,21 @@
   "license": "MIT",
   "dependencies": {
     "@web3keys/wallet-core": "*",
+    "bullmq": "^5.34.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2",
+    "ioredis": "^5.4.2",
     "jsonwebtoken": "^9.0.3",
     "nodemailer": "^8.0.10",
+    "pg": "^8.13.1",
     "pino": "^9.5.0",
     "pino-http": "^10.3.0",
+    "rate-limit-redis": "^4.2.0",
     "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "pg-mem": "^3.0.5"
   }
 }

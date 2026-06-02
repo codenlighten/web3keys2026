@@ -9,6 +9,9 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@web3keys/wallet-core": "*"
+    "@web3keys/wallet-core": "*",
+    "bullmq": "^5.34.0",
+    "ioredis": "^5.4.2",
+    "pino": "^9.5.0"
   }
 }

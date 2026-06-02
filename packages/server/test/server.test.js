@@ -11,6 +11,7 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 
 const security = require('../src/security');
+const db = require('../src/db');
 const { createApp } = require('../src/app');
 
 // Deterministic OTP so we can verify without reading email. svc calls
@@ -21,6 +22,7 @@ let server;
 let base;
 
 before(async () => {
+  await db.init(); // run migrations against the in-memory (pg-mem) database
   const app = createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
@@ -30,7 +32,17 @@ before(async () => {
   });
 });
 
-after(() => server && server.close());
+after(async () => {
+  if (server) server.close();
+  // Close any real Postgres/Redis connections so the test process exits cleanly
+  // (no-ops for the in-memory pg-mem path and when Redis is unconfigured).
+  await require('../src/db/pool')
+    .close()
+    .catch(() => {});
+  await require('../src/redis')
+    .closeRedis()
+    .catch(() => {});
+});
 
 async function api(method, path, body, token) {
   const res = await fetch(base + path, {

@@ -23,3 +23,35 @@ jobs:
         run: npx prettier --check "packages/**/*.{js,json,css,html}" "*.{js,json}"
       - name: Test
         run: npm test
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: web3keys
+          POSTGRES_PASSWORD: devpass
+          POSTGRES_DB: web3keys
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U web3keys" --health-interval 10s
+          --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 10s
+          --health-timeout 5s --health-retries 5
+    env:
+      DATABASE_URL: postgres://web3keys:devpass@localhost:5432/web3keys
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Server tests against real Postgres + Redis
+        run: npm run test:server
