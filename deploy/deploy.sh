@@ -3,6 +3,8 @@
 set -euo pipefail
 APP_DIR=/opt/web3keys
 
+git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
+
 echo "==> Pulling latest"
 git -C "$APP_DIR" pull --ff-only
 

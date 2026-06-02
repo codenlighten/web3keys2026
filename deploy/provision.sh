@@ -36,6 +36,7 @@ chown -R web3keys:web3keys "$DATA_DIR"
 chmod 750 "$ENV_DIR"
 
 echo "==> Cloning / updating repo into ${APP_DIR}"
+git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
 if [ -d "$APP_DIR/.git" ]; then
   git -C "$APP_DIR" pull --ff-only
 else
