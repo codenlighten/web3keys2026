@@ -6,6 +6,7 @@ const db = require('./db');
 const security = require('./security');
 const shares = require('./shares');
 const { ServiceError } = require('./errors');
+const { makeClient } = require('./paymailClient');
 const { sendOtpEmail } = require('./mailer');
 
 /**
@@ -18,6 +19,7 @@ const { sendOtpEmail } = require('./mailer');
  */
 
 const provider = new WhatsOnChainProvider({ network: config.network });
+const paymailClient = makeClient();
 
 function sanitizeAlias(email) {
   return (
@@ -72,7 +74,6 @@ async function scanXpubSatoshis(user, { gapLimit = 20, maxIndex = 500 } = {}) {
   let total = 0;
   let empty = 0;
   for (let i = 0; i <= maxIndex && empty < gapLimit; i++) {
-    // eslint-disable-next-line no-await-in-loop
     const utxos = await provider.getUtxos(deriveFromXpub(user.finance_xpub, i));
     if (!utxos.length) {
       empty += 1;
@@ -256,44 +257,60 @@ async function rotateReceiveAddress(user) {
 }
 
 /**
- * Resolve a recipient (raw address or paymail handle) to a destination address.
- * Local paymail (user@thisdomain) resolves from the DB; external paymail is not yet
- * supported in v1.
+ * Resolve a recipient (raw address or paymail handle) to a destination, returning either
+ * { address } or { script }:
+ *   - raw address                 → { address }
+ *   - local paymail (our domain)  → { address } from the DB
+ *   - external paymail            → { script } via the bsvalias client (payment destination)
  */
-async function resolveRecipient(to) {
+async function resolveRecipient(to, { satoshis, senderPaymail } = {}) {
   to = String(to || '').trim();
   if (/^[^@\s]+@[^@\s]+$/.test(to)) {
     const [alias, domain] = to.split('@');
-    if (domain.toLowerCase() !== config.domain.toLowerCase()) {
-      throw new ServiceError(
-        'External paymail resolution is not supported yet; use an address',
-        422
-      );
+    if (domain.toLowerCase() === config.domain.toLowerCase()) {
+      const u = await db.findByAlias(alias.toLowerCase());
+      if (!u) throw new ServiceError(`Unknown paymail ${to}`, 404);
+      return { address: depositAddress(u) };
     }
-    const u = await db.findByAlias(alias.toLowerCase());
-    if (!u) throw new ServiceError(`Unknown paymail ${to}`, 404);
-    return depositAddress(u);
+    // External paymail: resolve a payment destination (locking script) over bsvalias.
+    try {
+      const script = await paymailClient.getOutputScript(to, {
+        satoshis,
+        senderHandle: senderPaymail,
+        purpose: 'web3keys payment',
+      });
+      return { script };
+    } catch (e) {
+      throw new ServiceError(`Could not resolve paymail ${to}: ${e.message}`, 422);
+    }
   }
   try {
     bsv.Address.fromString(to); // validate
   } catch {
     throw new ServiceError('Invalid recipient address', 400);
   }
-  return to;
+  return { address: to };
 }
 
 /**
  * Send BSV from an unlocked session wallet, gathering UTXOs across ALL the finance
- * account's funded addresses (not just index 0). amount in satoshis.
+ * account's funded addresses (not just index 0). amount in satoshis. Supports raw
+ * addresses, local paymail, and external paymail (paid to a resolved locking script).
  */
-async function send(wallet, { to, satoshis }) {
-  const address = await resolveRecipient(to);
+async function send(wallet, { to, satoshis, senderPaymail }) {
   const amt = Number(satoshis);
   if (!Number.isInteger(amt) || amt <= 0) throw new ServiceError('Invalid amount', 400);
-  const result = await wallet.sendFromAccount([{ to: address, satoshis: amt }], {
-    account: 'finance',
-  });
-  return { txid: result.broadcastTxid || result.txid, fee: result.fee, to: address, satoshis: amt };
+  const dest = await resolveRecipient(to, { satoshis: amt, senderPaymail });
+  const output = dest.script
+    ? { script: dest.script, satoshis: amt }
+    : { to: dest.address, satoshis: amt };
+  const result = await wallet.sendFromAccount([output], { account: 'finance' });
+  return {
+    txid: result.broadcastTxid || result.txid,
+    fee: result.fee,
+    to: dest.address || to, // show the typed recipient (paymail) when paying a script
+    satoshis: amt,
+  };
 }
 
 module.exports = {

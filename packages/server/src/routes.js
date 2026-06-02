@@ -224,7 +224,11 @@ router.post(
     const wallet = session.getWallet(req.claims.sid);
     if (!wallet) throw new ServiceError('session expired; please log in again', 401);
     const { to, satoshis } = req.body;
-    const result = await svc.send(wallet, { to, satoshis });
+    const result = await svc.send(wallet, {
+      to,
+      satoshis,
+      senderPaymail: svc.publicProfile(req.user).paymail,
+    });
     await db
       .insertTransaction({
         txid: result.txid,

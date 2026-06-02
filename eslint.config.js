@@ -20,6 +20,7 @@ const nodeGlobals = {
   clearInterval: 'readonly',
   globalThis: 'readonly',
   fetch: 'readonly',
+  AbortSignal: 'readonly',
   URL: 'readonly',
   TextEncoder: 'readonly',
   TextDecoder: 'readonly',

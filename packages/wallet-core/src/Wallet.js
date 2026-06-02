@@ -118,7 +118,7 @@ class Wallet {
     for (let index = 0; index <= maxIndex && consecutiveEmpty < gapLimit; index++) {
       const priv = this.keyManager.privateKey(account, { change, index });
       const address = priv.toAddress(net).toString();
-      // eslint-disable-next-line no-await-in-loop
+
       const utxos = await this.provider.getUtxos(address);
       if (!utxos.length) {
         consecutiveEmpty += 1;
@@ -152,7 +152,12 @@ class Wallet {
 
     // Distinct signing keys for the funded addresses (bsv matches each key to its inputs).
     const keys = [...new Map(scanned.map((u) => [u.address, u.privateKey])).values()];
-    const utxos = scanned.map(({ privateKey, address, index, ...u }) => u); // provider shape w/ script
+    const utxos = scanned.map((u) => ({
+      txid: u.txid,
+      vout: u.vout,
+      satoshis: u.satoshis,
+      script: u.script,
+    }));
 
     const built = buildPayment({
       utxos,
