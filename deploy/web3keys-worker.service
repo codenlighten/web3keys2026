@@ -1,0 +1,27 @@
+[Unit]
+Description=web3keys background worker (deposit sync, queues)
+After=network-online.target web3keys.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=web3keys
+Group=web3keys
+WorkingDirectory=/opt/web3keys
+ExecStart=/usr/bin/node /opt/web3keys/packages/worker/src/index.js
+EnvironmentFile=/etc/web3keys/web3keys.env
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

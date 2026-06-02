@@ -12,7 +12,15 @@ REPO=https://github.com/codenlighten/web3keys2026.git
 echo "==> Installing base packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y curl ca-certificates gnupg git nginx sqlite3 ufw rclone age
+apt-get install -y curl ca-certificates gnupg git nginx sqlite3 ufw rclone age docker.io
+systemctl enable --now docker
+
+echo "==> Ensuring swap (small droplets OOM during npm install)"
+if ! swapon --show | grep -q .; then
+  fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+  chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile
+  grep -q "/swapfile" /etc/fstab || echo "/swapfile none swap sw 0 0" >>/etc/fstab
+fi
 
 echo "==> Installing Node ${NODE_MAJOR}.x (NodeSource)"
 if ! command -v node >/dev/null || [ "$(node -v | cut -c2 | tr -d v)" != "$NODE_MAJOR" ]; then
@@ -43,18 +51,16 @@ else
   git clone "$REPO" "$APP_DIR"
 fi
 
-echo "==> Installing dependencies (incl dev — needed to build the frontend)"
+echo "==> Installing production dependencies (frontend is prebuilt & shipped, not built here)"
 cd "$APP_DIR"
-npm ci || npm install
-
-echo "==> Building the web frontend (packages/web/dist)"
-npm run build -w @web3keys/web
+npm ci --omit=dev || npm install --omit=dev
 chown -R web3keys:web3keys "$APP_DIR"
 
-echo "==> Installing systemd unit"
+echo "==> Installing systemd units (api + worker)"
 cp "$APP_DIR/deploy/web3keys.service" /etc/systemd/system/web3keys.service
+cp "$APP_DIR/deploy/web3keys-worker.service" /etc/systemd/system/web3keys-worker.service
 systemctl daemon-reload
-systemctl enable web3keys
+systemctl enable web3keys web3keys-worker
 
 echo "==> Installing nginx site"
 cp "$APP_DIR/deploy/nginx-web3keys.conf" /etc/nginx/sites-available/web3keys
@@ -79,9 +85,17 @@ cat <<'NOTE'
 ==> Provisioning complete.
 
 Next steps (manual, require secrets / DNS):
-  1. Create the env file:  /etc/web3keys/web3keys.env   (see .env.example; set JWT_SECRET + SMTP_*)
+  1. Bring up Postgres + Redis (Docker):
+       docker run -d --name web3keys-postgres --restart unless-stopped \
+         -e POSTGRES_USER=web3keys -e POSTGRES_DB=web3keys -e POSTGRES_PASSWORD=<pw> \
+         -p 127.0.0.1:5432:5432 -v web3keys-pgdata:/var/lib/postgresql/data postgres:16-alpine
+       docker run -d --name web3keys-redis --restart unless-stopped \
+         -p 127.0.0.1:6379:6379 -v web3keys-redisdata:/data redis:7-alpine redis-server --appendonly yes
+  2. Create /etc/web3keys/web3keys.env (see .env.example): JWT_SECRET, SECRETS_KEY,
+     DATABASE_URL, REDIS_URL, SMTP_*, DO_SPACES_*, BACKUP_AGE_RECIPIENT, WALLET_DOMAIN, BASE_URL.
        chown root:web3keys /etc/web3keys/web3keys.env && chmod 640 /etc/web3keys/web3keys.env
-  2. Start the service:    systemctl start web3keys && systemctl status web3keys
-  3. Point DNS A records for web3keys.com + www to THIS droplet, then issue TLS:
+  3. Ship the prebuilt frontend from a dev machine:  bash deploy/build-and-ship.sh root@<host>
+  4. Start services:  systemctl start web3keys web3keys-worker
+  5. DNS A records for web3keys.com + www -> this droplet, then TLS:
        certbot --nginx -d web3keys.com -d www.web3keys.com --redirect -m you@web3keys.com --agree-tos
 NOTE
