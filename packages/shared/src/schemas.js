@@ -27,6 +27,15 @@ const schemas = {
   }),
   twoFactorEnable: z.object({ code: otpCode }),
   twoFactorDisable: z.object({ code: otpCode }),
+  ordinalsInscribe: z.object({
+    data: z.string().min(1).max(1_000_000),
+    contentType: z.string().min(1).max(128).optional(),
+  }),
+  ordinalsTransfer: z.object({
+    txid: z.string().regex(/^[0-9a-fA-F]{64}$/),
+    vout: z.number().int().min(0),
+    toAddress: z.string().min(1).max(128),
+  }),
 };
 
 module.exports = { schemas };

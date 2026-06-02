@@ -324,6 +324,18 @@ test('transaction history lists a user’s transactions', async () => {
   assert.equal(hist.json.transactions[0].direction, 'out');
 });
 
+test('ordinals endpoints require auth and validate input', async () => {
+  // unauthenticated
+  assert.equal((await api('GET', '/api/ordinals')).status, 401);
+  assert.equal((await api('POST', '/api/ordinals/transfer', { txid: 'x' })).status, 401);
+
+  const token = await registerLogin('ozzy@example.com', 'password1234');
+  // bad transfer body is rejected by validation (before any chain call)
+  const bad = await api('POST', '/api/ordinals/transfer', { txid: 'nothex', vout: -1 }, token);
+  assert.equal(bad.status, 400);
+  assert.ok(Array.isArray(bad.json.details));
+});
+
 test('account lockout after repeated failed logins (429)', async () => {
   const email = 'liam@example.com';
   const password = 'password1234';

@@ -257,6 +257,54 @@ router.get(
   })
 );
 
+// ── ordinals (1Sat) ──────────────────────────────────────────────────────────
+
+const requireWallet = (req) => {
+  const wallet = session.getWallet(req.claims.sid);
+  if (!wallet) throw new ServiceError('session expired; please log in again', 401);
+  return wallet;
+};
+
+router.get(
+  '/api/ordinals',
+  authed,
+  h(async (req, res) => {
+    res.json({ ordinals: await svc.listOrdinals(requireWallet(req)) });
+  })
+);
+
+router.post(
+  '/api/ordinals/inscribe',
+  authed,
+  validate(schemas.ordinalsInscribe),
+  h(async (req, res) => {
+    const result = await svc.inscribeOrdinal(requireWallet(req), req.body);
+    await db
+      .insertTransaction({
+        txid: result.txid,
+        userId: req.user.id,
+        direction: 'out',
+        amountSats: 1,
+        address: 'inscription',
+        status: 'broadcast',
+      })
+      .catch(() => {});
+    audit(req, 'inscribe', req.user.email, { txid: result.txid });
+    res.json(result);
+  })
+);
+
+router.post(
+  '/api/ordinals/transfer',
+  authed,
+  validate(schemas.ordinalsTransfer),
+  h(async (req, res) => {
+    const result = await svc.transferOrdinal(requireWallet(req), req.body);
+    audit(req, 'ordinal_transfer', req.user.email, { txid: result.txid, to: result.to });
+    res.json(result);
+  })
+);
+
 // Escape hatch: reveal the full mnemonic so the user can move to self-custody. Requires
 // an active (unlocked) session, since the seed only exists in the session vault.
 router.get('/api/wallet/export', authed, (req, res) => {

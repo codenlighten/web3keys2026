@@ -256,6 +256,29 @@ async function rotateReceiveAddress(user) {
   return { address: deriveFromXpub(user.finance_xpub, index), index };
 }
 
+// ── ordinals (1Sat) ──────────────────────────────────────────────────────────
+
+/** List the session wallet's ordinals (1-sat UTXOs in the tokens account). */
+async function listOrdinals(wallet) {
+  const utxos = await wallet.listOrdinals();
+  return utxos.map((u) => ({ txid: u.txid, vout: u.vout, satoshis: u.satoshis }));
+}
+
+/** Inscribe a 1Sat Ordinal (funded by finance, owned by the tokens account). */
+async function inscribeOrdinal(wallet, { data, contentType = 'text/plain' }) {
+  const result = await wallet.inscribe({ data, contentType });
+  return { txid: result.broadcastTxid || result.txid, fee: result.fee, vout: result.ordinalVout };
+}
+
+/** Transfer an owned ordinal (1-sat UTXO) to another address. */
+async function transferOrdinal(wallet, { txid, vout, toAddress }) {
+  const result = await wallet.transferOrdinal({
+    ordinalUtxo: { txid, vout, satoshis: 1 },
+    toAddress,
+  });
+  return { txid: result.broadcastTxid || result.txid, fee: result.fee, to: toAddress };
+}
+
 /**
  * Resolve a recipient (raw address or paymail handle) to a destination, returning either
  * { address } or { script }:
@@ -326,6 +349,9 @@ module.exports = {
   depositAddress,
   receiveAddress,
   rotateReceiveAddress,
+  listOrdinals,
+  inscribeOrdinal,
+  transferOrdinal,
   resolveRecipient,
   issueOtp,
 };
