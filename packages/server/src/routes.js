@@ -225,12 +225,31 @@ router.post(
     if (!wallet) throw new ServiceError('session expired; please log in again', 401);
     const { to, satoshis } = req.body;
     const result = await svc.send(wallet, { to, satoshis });
+    await db
+      .insertTransaction({
+        txid: result.txid,
+        userId: req.user.id,
+        direction: 'out',
+        amountSats: result.satoshis,
+        address: result.to,
+        status: 'broadcast',
+      })
+      .catch(() => {});
     audit(req, 'send', req.user.email, {
       to: result.to,
       satoshis: result.satoshis,
       txid: result.txid,
     });
     res.json(result);
+  })
+);
+
+router.get(
+  '/api/wallet/history',
+  authed,
+  h(async (req, res) => {
+    const transactions = await db.listTransactions(req.user.id, { limit: 100 });
+    res.json({ transactions });
   })
 );
 

@@ -141,6 +141,31 @@ async function deleteOtp(email, purpose) {
   return query('DELETE FROM otps WHERE email = $1 AND purpose = $2', [email, purpose]);
 }
 
+// ── transactions (history) ─────────────────────────────────────────────────────
+
+async function insertTransaction(t) {
+  return one(
+    `INSERT INTO transactions (txid, user_id, direction, amount_sats, address, status)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+    [t.txid, t.userId || null, t.direction, t.amountSats, t.address || null, t.status || 'pending']
+  );
+}
+
+async function listTransactions(userId, { limit = 50 } = {}) {
+  const { rows } = await query(
+    'SELECT * FROM transactions WHERE user_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2',
+    [userId, limit]
+  );
+  return rows.map((r) => ({
+    txid: r.txid,
+    direction: r.direction,
+    amountSats: Number(r.amount_sats),
+    address: r.address,
+    status: r.status,
+    createdAt: r.created_at,
+  }));
+}
+
 // ── audit log ─────────────────────────────────────────────────────────────────
 
 async function audit({ email, action, ip, detail }) {
@@ -165,6 +190,8 @@ module.exports = {
   getUserShare,
   putTtpShare,
   getTtpShare,
+  insertTransaction,
+  listTransactions,
   upsertOtp,
   getOtp,
   incrementOtpAttempts,

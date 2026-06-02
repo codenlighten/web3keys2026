@@ -298,9 +298,36 @@ test('receive address rotates (HD), distinct valid addresses', async () => {
   assert.equal(a1.json.address, rotated.json.address);
 });
 
+test('transaction history lists a user’s transactions', async () => {
+  const email = 'hank@example.com';
+  const password = 'password1234';
+  const token = await registerLogin(email, password);
+  const user = await db.findByEmail(email);
+
+  // empty initially
+  const empty = await api('GET', '/api/wallet/history', null, token);
+  assert.equal(empty.status, 200);
+  assert.deepEqual(empty.json.transactions, []);
+
+  // seed one outgoing tx directly, then read it back via the API
+  await db.insertTransaction({
+    txid: 'a'.repeat(64),
+    userId: user.id,
+    direction: 'out',
+    amountSats: 12345,
+    address: '1Destination',
+    status: 'broadcast',
+  });
+  const hist = await api('GET', '/api/wallet/history', null, token);
+  assert.equal(hist.json.transactions.length, 1);
+  assert.equal(hist.json.transactions[0].amountSats, 12345);
+  assert.equal(hist.json.transactions[0].direction, 'out');
+});
+
 test('account lockout after repeated failed logins (429)', async () => {
   const email = 'liam@example.com';
   const password = 'password1234';
+  await require('../src/lockout').clear(email); // robust against leftover Redis state
   await api('POST', '/api/auth/register', { email, password });
   await api('POST', '/api/auth/verify', { email, code: '123456' });
 
