@@ -100,10 +100,16 @@ export function Auth({ onAuthed }: { onAuthed: (p: Profile) => void }) {
         <h2>{importMode ? 'Import a wallet' : 'Create your wallet'}</h2>
         {err && <div className="alert">{err}</div>}
         <div className="tabs">
-          <button className={`ghost tab ${!importMode ? 'active' : ''}`} onClick={() => setImportMode(false)}>
+          <button
+            className={`ghost tab ${!importMode ? 'active' : ''}`}
+            onClick={() => setImportMode(false)}
+          >
             Create new
           </button>
-          <button className={`ghost tab ${importMode ? 'active' : ''}`} onClick={() => setImportMode(true)}>
+          <button
+            className={`ghost tab ${importMode ? 'active' : ''}`}
+            onClick={() => setImportMode(true)}
+          >
             Import existing
           </button>
         </div>
@@ -219,7 +225,10 @@ export function Auth({ onAuthed }: { onAuthed: (p: Profile) => void }) {
           </button>
         </form>
         <p className="switch">
-          <button className="linkbtn" onClick={() => api.resend(email).then(() => setOk('Code resent'))}>
+          <button
+            className="linkbtn"
+            onClick={() => api.resend(email).then(() => setOk('Code resent'))}
+          >
             Resend code
           </button>
         </p>

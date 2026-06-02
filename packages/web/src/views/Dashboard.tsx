@@ -14,7 +14,13 @@ function Qr({ value }: { value: string }) {
       .catch(() => setSrc(''));
   }, [value]);
   return src ? (
-    <img src={src} alt="QR" width={180} height={180} style={{ display: 'block', margin: '8px auto', borderRadius: 10 }} />
+    <img
+      src={src}
+      alt="QR"
+      width={180}
+      height={180}
+      style={{ display: 'block', margin: '8px auto', borderRadius: 10 }}
+    />
   ) : null;
 }
 
@@ -28,13 +34,25 @@ export function Dashboard({ profile, onLogout }: { profile: Profile; onLogout: (
   const [err, setErr] = useState('');
 
   function refresh() {
-    api.balance().then((b) => setBalance(b.confirmed + b.unconfirmed)).catch(() => setBalance(null));
-    api.history().then((h) => setTxs(h.transactions)).catch(() => {});
-    api.notifications().then((n) => setNotes(n.notifications)).catch(() => {});
+    api
+      .balance()
+      .then((b) => setBalance(b.confirmed + b.unconfirmed))
+      .catch(() => setBalance(null));
+    api
+      .history()
+      .then((h) => setTxs(h.transactions))
+      .catch(() => {});
+    api
+      .notifications()
+      .then((n) => setNotes(n.notifications))
+      .catch(() => {});
   }
 
   useEffect(() => {
-    api.address().then((a) => setAddress(a.address)).catch(() => {});
+    api
+      .address()
+      .then((a) => setAddress(a.address))
+      .catch(() => {});
     refresh();
   }, []);
 
@@ -42,7 +60,11 @@ export function Dashboard({ profile, onLogout }: { profile: Profile; onLogout: (
     <section>
       <div className="tabs">
         {(['wallet', 'activity', 'settings'] as const).map((t) => (
-          <button key={t} className={`ghost tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
+          <button
+            key={t}
+            className={`ghost tab ${tab === t ? 'active' : ''}`}
+            onClick={() => setTab(t)}
+          >
             {t[0].toUpperCase() + t.slice(1)}
           </button>
         ))}
@@ -160,7 +182,13 @@ function Wallet({
         </label>
         <label>
           Amount (satoshis)
-          <input type="number" min={1} value={amount} onChange={(e) => setAmount(e.target.value)} required />
+          <input
+            type="number"
+            min={1}
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            required
+          />
         </label>
         <button className="primary" disabled={busy}>
           {busy ? 'Signing & sending…' : 'Send'}
@@ -183,7 +211,9 @@ function Activity({ txs, notes }: { txs: Tx[]; notes: Notification[] }) {
           {!n.read && (
             <button
               className="linkbtn"
-              onClick={() => api.markRead(n.id).then(() => setItems((xs) => xs.filter((x) => x.id !== n.id)))}
+              onClick={() =>
+                api.markRead(n.id).then(() => setItems((xs) => xs.filter((x) => x.id !== n.id)))
+              }
             >
               mark read
             </button>
@@ -205,7 +235,13 @@ function Activity({ txs, notes }: { txs: Tx[]; notes: Notification[] }) {
   );
 }
 
-function Settings({ setMsg, setErr }: { setMsg: (s: string) => void; setErr: (s: string) => void }) {
+function Settings({
+  setMsg,
+  setErr,
+}: {
+  setMsg: (s: string) => void;
+  setErr: (s: string) => void;
+}) {
   const [otpauth, setOtpauth] = useState('');
   const [secret, setSecret] = useState('');
   const [code, setCode] = useState('');
@@ -213,18 +249,24 @@ function Settings({ setMsg, setErr }: { setMsg: (s: string) => void; setErr: (s:
   const [backupPass, setBackupPass] = useState('');
 
   const setup2fa = () =>
-    api.twoFactorSetup().then((r) => {
-      setOtpauth(r.otpauth);
-      setSecret(r.secret);
-    }).catch((e) => setErr(e.message));
+    api
+      .twoFactorSetup()
+      .then((r) => {
+        setOtpauth(r.otpauth);
+        setSecret(r.secret);
+      })
+      .catch((e) => setErr(e.message));
 
   const enable2fa = () =>
-    api.twoFactorEnable(code).then(() => {
-      setMsg('2FA enabled');
-      setOtpauth('');
-      setSecret('');
-      setCode('');
-    }).catch((e) => setErr(e.message));
+    api
+      .twoFactorEnable(code)
+      .then(() => {
+        setMsg('2FA enabled');
+        setOtpauth('');
+        setSecret('');
+        setCode('');
+      })
+      .catch((e) => setErr(e.message));
 
   const saveBackup = async () => {
     try {

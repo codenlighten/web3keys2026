@@ -100,7 +100,10 @@ export const api = {
   newAddress: () => request<{ address: string; index: number }>('POST', '/api/wallet/address/new'),
   utxos: () => request<{ utxos: Utxo[] }>('GET', '/api/wallet/utxos'),
   resolve: (to: string, satoshis: number) =>
-    request<{ address?: string; script?: string }>('POST', '/api/paymail/resolve', { to, satoshis }),
+    request<{ address?: string; script?: string }>('POST', '/api/paymail/resolve', {
+      to,
+      satoshis,
+    }),
   broadcast: (rawHex: string, meta: { to?: string; satoshis?: number } = {}) =>
     request<{ txid: string }>('POST', '/api/tx/broadcast', { rawHex, ...meta }),
   history: () => request<{ transactions: Tx[] }>('GET', '/api/wallet/history'),
@@ -113,5 +116,6 @@ export const api = {
   markRead: (id: number) => request<{ ok: boolean }>('POST', `/api/notifications/${id}/read`),
 
   twoFactorSetup: () => request<{ otpauth: string; secret: string }>('POST', '/api/2fa/setup'),
-  twoFactorEnable: (code: string) => request<{ enabled: boolean }>('POST', '/api/2fa/enable', { code }),
+  twoFactorEnable: (code: string) =>
+    request<{ enabled: boolean }>('POST', '/api/2fa/enable', { code }),
 };

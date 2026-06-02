@@ -191,6 +191,33 @@ button:disabled {
   display: flex;
   gap: 8px;
 }
+.approve h2 {
+  margin-bottom: 4px;
+}
+.approve .scopes {
+  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.approve .scopes label {
+  font-size: 14px;
+  cursor: pointer;
+}
+.approve .payload {
+  background: var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 180px;
+  overflow: auto;
+}
+.small {
+  font-size: 11px;
+}
 .muted {
   color: var(--muted);
   font-size: 12px;

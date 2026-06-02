@@ -18,7 +18,17 @@
 // own crypto with bsv.Message.verify(payload, address, signature).
 
 (function (global) {
-  var AUTHORITY = 'https://wallet.smartledger.technology'
+  // The wallet authority defaults to wherever this script is hosted (so embedding
+  // https://web3keys.com/sl-login.js makes web3keys.com the sign-in wallet). Override
+  // per-call with opts.authority. Falls back to web3keys.com if the origin is unknown.
+  var AUTHORITY = (function () {
+    try {
+      if (typeof document !== 'undefined' && document.currentScript && document.currentScript.src) {
+        return new URL(document.currentScript.src).origin
+      }
+    } catch (_) {}
+    return 'https://web3keys.com'
+  })()
   var PREFIX = 'SmartLedger Wallet sign-in v1'
   var NONCE_KEY = 'sl-login-nonce'
   var SESSION_KEY_PREFIX = 'sl-session:'

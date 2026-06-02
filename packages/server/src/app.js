@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
@@ -97,6 +98,19 @@ function createApp() {
   app.use(paymailRouter);
   app.use(ssoRouter);
   app.use(apiRouter);
+
+  // SPA fallback: serve index.html for client-side routes (dashboard, and the
+  // SmartLedger Login approval pages /login /attest /publish that sl-login.js
+  // redirects to) so deep links resolve. API/well-known/static paths matched above.
+  const indexHtml = path.join(PUBLIC_DIR, 'index.html');
+  if (fs.existsSync(indexHtml)) {
+    app.use((req, res, next) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+      if (req.path.startsWith('/api') || req.path.startsWith('/.well-known')) return next();
+      if (!req.accepts('html')) return next();
+      res.sendFile(indexHtml);
+    });
+  }
 
   // 404
   app.use((req, res) => res.status(404).json({ error: 'not found' }));

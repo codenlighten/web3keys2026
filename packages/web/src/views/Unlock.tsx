@@ -67,10 +67,16 @@ export function Unlock({
         Signed in as {profile.paymail}. Your keys live only in your browser — unlock to send.
       </p>
       <div className="tabs">
-        <button className={`ghost tab ${mode === 'phrase' ? 'active' : ''}`} onClick={() => setMode('phrase')}>
+        <button
+          className={`ghost tab ${mode === 'phrase' ? 'active' : ''}`}
+          onClick={() => setMode('phrase')}
+        >
           Recovery phrase
         </button>
-        <button className={`ghost tab ${mode === 'backup' ? 'active' : ''}`} onClick={() => setMode('backup')}>
+        <button
+          className={`ghost tab ${mode === 'backup' ? 'active' : ''}`}
+          onClick={() => setMode('backup')}
+        >
           Encrypted backup
         </button>
       </div>
@@ -85,7 +91,12 @@ export function Unlock({
         >
           <label>
             Recovery phrase (12 or 24 words)
-            <input value={phrase} onChange={(e) => setPhrase(e.target.value)} autoComplete="off" required />
+            <input
+              value={phrase}
+              onChange={(e) => setPhrase(e.target.value)}
+              autoComplete="off"
+              required
+            />
           </label>
           <label>
             Passphrase (only if you set one)
