@@ -42,6 +42,7 @@ const schemas = {
   }),
   twoFactorEnable: z.object({ code: otpCode }),
   twoFactorDisable: z.object({ code: otpCode }),
+  deleteAccount: z.object({ password }),
   ordinalTxid: z.object({ txid: hexId, vout: z.number().int().min(0) }),
 };
 

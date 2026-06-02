@@ -261,6 +261,37 @@ test('account lockout after repeated failed logins (429)', async () => {
   assert.equal(locked.status, 429);
 });
 
+test('GDPR: account data export returns the user’s data', async () => {
+  const { token } = await registerVerifyLogin('export@example.com');
+  const exp = await api('GET', '/api/account/export', null, token);
+  assert.equal(exp.status, 200);
+  assert.equal(exp.json.account.paymail, 'export@web3keys.com');
+  assert.ok(exp.json.account.financeXpub.startsWith('xpub'));
+  assert.ok(Array.isArray(exp.json.transactions));
+  assert.ok(Array.isArray(exp.json.audit));
+});
+
+test('GDPR: account deletion requires the password and erases the user', async () => {
+  const email = 'erase@example.com';
+  const password = 'password1234';
+  const { token } = await registerVerifyLogin(email, password);
+
+  // wrong password is rejected
+  assert.equal(
+    (await api('DELETE', '/api/account', { password: 'nope-nope-nope' }, token)).status,
+    401
+  );
+
+  const del = await api('DELETE', '/api/account', { password }, token);
+  assert.equal(del.status, 200);
+  assert.ok(del.json.deleted);
+
+  // user is gone: cannot log in, and the old token is invalid
+  assert.equal((await api('POST', '/api/auth/login', { email, password })).status, 401);
+  assert.equal((await api('GET', '/api/wallet/profile', null, token)).status, 401);
+  assert.equal(await db.findByEmail(email), null);
+});
+
 test('duplicate registration is rejected', async () => {
   const { body } = regBody('dupe@example.com', 'password1234');
   assert.equal((await api('POST', '/api/auth/register', body)).status, 201);

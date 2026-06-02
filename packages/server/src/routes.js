@@ -261,6 +261,46 @@ router.post(
   )
 );
 
+// ── account (GDPR: data export + erasure) ─────────────────────────────────────────
+
+router.get(
+  '/api/account/export',
+  authed,
+  h(async (req, res) => {
+    const u = req.user;
+    res.json({
+      account: {
+        email: u.email,
+        paymail: svc.publicProfile(u).paymail,
+        alias: u.alias,
+        identityKey: u.identity_pubkey,
+        financeXpub: u.finance_xpub,
+        tokensXpub: u.tokens_xpub,
+        identityXpub: u.identity_xpub,
+        verified: !!u.verified,
+        createdAt: u.created_at,
+      },
+      transactions: await db.listTransactions(u.id, { limit: 10000 }),
+      notifications: await db.listNotifications(u.id, { limit: 10000 }),
+      backup: await db.getBackup(u.id),
+      audit: await db.listAuditForEmail(u.email),
+    });
+  })
+);
+
+router.delete(
+  '/api/account',
+  authed,
+  validate(schemas.deleteAccount),
+  h(async (req, res) => {
+    await svc.authenticate({ email: req.user.email, password: req.body.password }); // re-auth
+    await db.deleteUser(req.user.id);
+    await db.deleteAuditForEmail(req.user.email); // erase PII trail
+    await session.revokeSession(req.claims.sid);
+    res.json({ deleted: true });
+  })
+);
+
 // ── encrypted backup (Tier 1) — opaque blob the server cannot decrypt ─────────────
 
 router.put(

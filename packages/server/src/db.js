@@ -231,6 +231,38 @@ async function markNotificationRead(userId, id) {
   return rowCount > 0;
 }
 
+// ── account (GDPR export / delete) ──────────────────────────────────────────────
+
+async function listAuditForEmail(email, { limit = 500 } = {}) {
+  const { rows } = await query(
+    'SELECT ts, action, ip, detail FROM audit_log WHERE email = $1 ORDER BY ts DESC LIMIT $2',
+    [email, limit]
+  );
+  return rows;
+}
+
+async function deleteAuditForEmail(email) {
+  return query('DELETE FROM audit_log WHERE email = $1', [email]);
+}
+
+/** Permanently delete a user and all dependent rows (children first, then the user). */
+async function deleteUser(userId) {
+  for (const t of [
+    'notifications',
+    'transactions',
+    'backups',
+    'webauthn_credentials',
+    'kyc',
+    'addresses',
+    'webhooks',
+  ]) {
+    // eslint-disable-next-line no-await-in-loop
+    await query(`DELETE FROM ${t} WHERE user_id = $1`, [userId]).catch(() => {});
+  }
+  const { rowCount } = await query('DELETE FROM users WHERE id = $1', [userId]);
+  return rowCount > 0;
+}
+
 // ── audit log ─────────────────────────────────────────────────────────────────
 
 async function audit({ email, action, ip, detail }) {
@@ -264,6 +296,9 @@ module.exports = {
   insertNotification,
   listNotifications,
   markNotificationRead,
+  listAuditForEmail,
+  deleteAuditForEmail,
+  deleteUser,
   upsertOtp,
   getOtp,
   incrementOtpAttempts,
