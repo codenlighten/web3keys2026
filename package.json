@@ -1,0 +1,28 @@
+{
+  "name": "web3keys2",
+  "version": "0.1.0",
+  "description": "BSV HD wallet — BSV payments, 1Sat Ordinals, and full BRC-100 substrate, built on @smartledger/bsv",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "bin": {
+    "web3keys": "bin/cli.js"
+  },
+  "scripts": {
+    "test": "node --test test/",
+    "cli": "node bin/cli.js"
+  },
+  "keywords": [
+    "bsv",
+    "wallet",
+    "hd-wallet",
+    "ordinals",
+    "1sat",
+    "brc-100",
+    "brc-42",
+    "brc-43"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@smartledger/bsv": "^4.0.1"
+  }
+}
