@@ -1,0 +1,28 @@
+[Unit]
+Description=web3keys wallet service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=web3keys
+Group=web3keys
+WorkingDirectory=/opt/web3keys
+ExecStart=/usr/bin/node /opt/web3keys/server/index.js
+EnvironmentFile=/etc/web3keys/web3keys.env
+Restart=on-failure
+RestartSec=3
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/web3keys
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

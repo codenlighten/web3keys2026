@@ -145,6 +145,51 @@ are never written to the database — pending records store the funding *account
 signing key is re-derived from the seed at sign time. `node:sqlite` is lazy-required, so
 importing the package stays silent until you actually construct a `SqliteStorage`.
 
+## Wallet service (server)
+
+`server/` is a HandCash-style consumer wallet service that consumes this library:
+email-OTP registration, encrypted server-side mnemonic custody, paymail, and a JSON API.
+
+```bash
+cp .env.example .env      # set JWT_SECRET + SMTP_* (and WALLET_DOMAIN)
+npm start                 # node server/index.js
+```
+
+**Security model.** The mnemonic is sealed with AES-256-GCM under a key derived from
+the user's password (scrypt); the server stores only ciphertext + the **public** account
+xpubs and identity key. It therefore cannot decrypt the seed without the user's password,
+yet can still derive receive addresses and serve paymail. The seed is decrypted only
+transiently in an in-memory session vault (TTL, wiped on logout) for signing. The mnemonic
+is returned to the client exactly once at registration (copy-to-clipboard) and never logged.
+
+### API
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| POST | `/api/auth/register` | – | create account, seal mnemonic, email OTP; returns mnemonic once |
+| POST | `/api/auth/verify` | – | confirm email with OTP code |
+| POST | `/api/auth/login` | – | unlock wallet, returns JWT |
+| POST | `/api/auth/logout` | JWT | wipe session vault entry |
+| GET | `/api/wallet/profile` | JWT | profile + paymail + address |
+| GET | `/api/wallet/balance` | JWT | confirmed/unconfirmed balance |
+| POST | `/api/wallet/send` | JWT | send BSV to address or local paymail |
+| GET | `/.well-known/bsvalias` | – | paymail capability discovery |
+| GET | `/api/paymail/id/{paymail}` | – | paymail PKI (identity pubkey) |
+| POST | `/api/paymail/address/{paymail}` | – | paymail payment destination (P2PKH script) |
+
+### Deployment (DigitalOcean + nginx + TLS)
+
+```bash
+# on the droplet, as root:
+bash deploy/provision.sh          # installs Node 22, nginx, certbot; clones repo; systemd + nginx
+# then create /etc/web3keys/web3keys.env (from .env.example), start, and issue TLS:
+systemctl start web3keys
+certbot --nginx -d web3keys.com -d www.web3keys.com --redirect
+```
+
+`deploy/deploy.sh` redeploys latest code on an already-provisioned box.
+TLS requires the domain's A records to point at the droplet first.
+
 ## Pluggable providers
 
 Implement `ChainProvider` to back the wallet with any data source (a node,

@@ -2,3 +2,11 @@ node_modules/
 *.log
 .DS_Store
 .env
+.env.*
+!.env.example
+
+# runtime data (sqlite db + WAL)
+data/
+*.db
+*.db-wal
+*.db-shm

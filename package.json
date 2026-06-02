@@ -8,8 +8,10 @@
     "web3keys": "bin/cli.js"
   },
   "scripts": {
-    "test": "node --test test/",
-    "cli": "node bin/cli.js"
+    "test": "node --test 'test/**/*.test.js'",
+    "cli": "node bin/cli.js",
+    "start": "node server/index.js",
+    "server:dev": "NODE_ENV=development node server/index.js"
   },
   "keywords": [
     "bsv",
@@ -23,6 +25,12 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@smartledger/bsv": "^4.0.1"
+    "@smartledger/bsv": "^4.0.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.5.2",
+    "jsonwebtoken": "^9.0.3",
+    "nodemailer": "^8.0.10"
   }
 }
