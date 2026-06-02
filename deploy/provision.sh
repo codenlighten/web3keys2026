@@ -12,7 +12,7 @@ REPO=https://github.com/codenlighten/web3keys2026.git
 echo "==> Installing base packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y curl ca-certificates gnupg git nginx sqlite3 ufw rclone
+apt-get install -y curl ca-certificates gnupg git nginx sqlite3 ufw rclone age
 
 echo "==> Installing Node ${NODE_MAJOR}.x (NodeSource)"
 if ! command -v node >/dev/null || [ "$(node -v | cut -c2 | tr -d v)" != "$NODE_MAJOR" ]; then
