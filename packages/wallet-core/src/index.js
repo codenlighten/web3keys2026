@@ -15,6 +15,7 @@ const { WhatsOnChainProvider } = require('./providers/WhatsOnChainProvider');
 const Ordinals = require('./ordinals/Ordinals');
 const TxBuilder = require('./tx/TxBuilder');
 const { coinSelect } = require('./tx/coinSelect');
+const threshold = require('./threshold');
 const paths = require('./paths');
 
 module.exports = {
@@ -38,6 +39,7 @@ module.exports = {
   Ordinals,
   TxBuilder,
   coinSelect,
+  threshold,
   paths,
   // underlying library, re-exported for advanced use
   bsv,
