@@ -4,9 +4,9 @@ import { validateMnemonic, controlsAddress, decryptBackup } from '../wallet';
 import { walletSession } from '../walletSession';
 
 /**
- * Shown after login when the seed isn't in memory (fresh device / page reload). The user
- * unlocks LOCALLY — by typing their phrase or restoring the encrypted backup — so signing
- * can happen client-side. The server is never involved in producing the key.
+ * Shown after login when the seed isn't in memory (fresh device / reload). The user
+ * unlocks LOCALLY — phrase (+ optional passphrase) or encrypted backup — so signing can
+ * happen client-side. The server never produces the key.
  */
 export function Unlock({
   profile,
@@ -20,15 +20,16 @@ export function Unlock({
   const [mode, setMode] = useState<'phrase' | 'backup'>('phrase');
   const [phrase, setPhrase] = useState('');
   const [passphrase, setPassphrase] = useState('');
+  const [backupPass, setBackupPass] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
-  function accept(m: string) {
+  function accept(m: string, pass: string) {
     if (!validateMnemonic(m)) throw new Error('Invalid recovery phrase');
-    if (!controlsAddress(m, profile.address)) {
-      throw new Error('That phrase does not match this account');
+    if (!controlsAddress(m, pass, profile.address)) {
+      throw new Error('That phrase/passphrase does not match this account');
     }
-    walletSession.set(m.trim());
+    walletSession.set(m.trim(), pass);
     onUnlocked();
   }
 
@@ -36,7 +37,7 @@ export function Unlock({
     setBusy(true);
     setErr('');
     try {
-      accept(phrase);
+      accept(phrase, passphrase);
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Unlock failed');
     } finally {
@@ -49,8 +50,9 @@ export function Unlock({
     setErr('');
     try {
       const { ciphertext } = await api.getBackup();
-      const m = await decryptBackup(ciphertext, passphrase);
-      accept(m);
+      const json = await decryptBackup(ciphertext, backupPass);
+      const { mnemonic, passphrase: pass } = JSON.parse(json);
+      accept(mnemonic, pass || '');
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Could not restore backup');
     } finally {
@@ -82,8 +84,17 @@ export function Unlock({
           }}
         >
           <label>
-            12-word recovery phrase
-            <input value={phrase} onChange={(e) => setPhrase(e.target.value)} required />
+            Recovery phrase (12 or 24 words)
+            <input value={phrase} onChange={(e) => setPhrase(e.target.value)} autoComplete="off" required />
+          </label>
+          <label>
+            Passphrase (only if you set one)
+            <input
+              type="password"
+              value={passphrase}
+              onChange={(e) => setPassphrase(e.target.value)}
+              autoComplete="off"
+            />
           </label>
           <button className="primary" disabled={busy}>
             {busy ? 'Unlocking…' : 'Unlock'}
@@ -100,8 +111,8 @@ export function Unlock({
             Backup passphrase
             <input
               type="password"
-              value={passphrase}
-              onChange={(e) => setPassphrase(e.target.value)}
+              value={backupPass}
+              onChange={(e) => setBackupPass(e.target.value)}
               required
             />
           </label>

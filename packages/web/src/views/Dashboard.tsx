@@ -124,7 +124,8 @@ function Wallet({
       const { utxos } = await api.utxos();
       if (!utxos.length) throw new Error('No spendable funds');
       const dest = await api.resolve(to, amt);
-      const rawHex = buildSignedTx(walletSession.get(), utxos, dest, amt);
+      const s = walletSession.get();
+      const rawHex = buildSignedTx(s.mnemonic, s.passphrase, utxos, dest, amt);
       const { txid } = await api.broadcast(rawHex, { to, satoshis: amt });
       setTo('');
       setAmount('');
@@ -227,7 +228,8 @@ function Settings({ setMsg, setErr }: { setMsg: (s: string) => void; setErr: (s:
 
   const saveBackup = async () => {
     try {
-      const ct = await encryptBackup(walletSession.get(), backupPass);
+      // Back up the full secret (phrase + passphrase) as an opaque blob the server can't read.
+      const ct = await encryptBackup(JSON.stringify(walletSession.get()), backupPass);
       await api.putBackup('passphrase-pbkdf2-aesgcm', ct);
       setBackupPass('');
       setMsg('Encrypted backup saved (only you can decrypt it).');
@@ -290,7 +292,7 @@ function Settings({ setMsg, setErr }: { setMsg: (s: string) => void; setErr: (s:
       {phrase ? (
         <div className="blob">{phrase}</div>
       ) : (
-        <button className="ghost" onClick={() => setPhrase(walletSession.get())}>
+        <button className="ghost" onClick={() => setPhrase(walletSession.get().mnemonic)}>
           Reveal recovery phrase
         </button>
       )}

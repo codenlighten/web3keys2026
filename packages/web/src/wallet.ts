@@ -26,8 +26,9 @@ export type Accounts = {
   financeAddress: string;
 };
 
+/** Generate a 24-word (256-bit) recovery phrase. */
 export function generateMnemonic(): string {
-  return new (bsv().Mnemonic)().toString();
+  return new (bsv().Mnemonic)(256).toString();
 }
 
 export function validateMnemonic(m: string): boolean {
@@ -38,13 +39,15 @@ export function validateMnemonic(m: string): boolean {
   }
 }
 
-function master(mnemonic: string): any {
-  return bsv().Mnemonic.fromString(mnemonic.trim()).toHDPrivateKey();
+// An optional BIP-39 passphrase ("25th word") salts the seed — same phrase + different
+// passphrase = a different wallet. It is part of the secret and never sent to the server.
+function master(mnemonic: string, passphrase = ''): any {
+  return bsv().Mnemonic.fromString(mnemonic.trim()).toHDPrivateKey(passphrase);
 }
 
 /** Public material the server stores at registration — no seed. */
-export function deriveAccounts(mnemonic: string): Accounts {
-  const m = master(mnemonic);
+export function deriveAccounts(mnemonic: string, passphrase = ''): Accounts {
+  const m = master(mnemonic, passphrase);
   return {
     identityKey: m.deriveChild("m/44'/236'/0'/0/0").privateKey.publicKey.toString(),
     identityXpub: m.deriveChild("m/44'/236'/0'").hdPublicKey.toString(),
@@ -54,10 +57,10 @@ export function deriveAccounts(mnemonic: string): Accounts {
   };
 }
 
-/** True if the mnemonic controls the given finance deposit address (index 0). */
-export function controlsAddress(mnemonic: string, address: string): boolean {
+/** True if the mnemonic (+ optional passphrase) controls the finance deposit address. */
+export function controlsAddress(mnemonic: string, passphrase: string, address: string): boolean {
   try {
-    return deriveAccounts(mnemonic).financeAddress === address;
+    return deriveAccounts(mnemonic, passphrase).financeAddress === address;
   } catch {
     return false;
   }
@@ -70,12 +73,13 @@ export function controlsAddress(mnemonic: string, address: string): boolean {
  */
 export function buildSignedTx(
   mnemonic: string,
+  passphrase: string,
   utxos: Utxo[],
   dest: { address?: string; script?: string },
   satoshis: number
 ): string {
   const B = bsv();
-  const m = master(mnemonic);
+  const m = master(mnemonic, passphrase);
   const tx = new B.Transaction();
   const keys: any[] = [];
   for (const u of utxos) {

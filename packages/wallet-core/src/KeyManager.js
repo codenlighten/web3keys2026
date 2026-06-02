@@ -15,7 +15,7 @@ class KeyManager {
    * @param {string} [opts.passphrase] optional BIP-39 passphrase
    * @param {'livenet'|'testnet'} [opts.network]
    */
-  constructor({ mnemonic, passphrase = '', network = 'livenet' } = {}) {
+  constructor({ mnemonic, passphrase = '', network = 'livenet', strength = 256 } = {}) {
     this.network = Networks[network] || Networks.livenet;
     this.passphrase = passphrase;
 
@@ -25,7 +25,8 @@ class KeyManager {
       }
       this._mnemonic = Mnemonic.fromString(mnemonic);
     } else {
-      this._mnemonic = Mnemonic.fromRandom();
+      // Default to 256-bit entropy → 24-word recovery phrase.
+      this._mnemonic = new Mnemonic(strength);
     }
 
     const seed = this._mnemonic.toSeed(this.passphrase);

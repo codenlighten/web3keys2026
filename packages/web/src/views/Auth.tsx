@@ -1,15 +1,18 @@
 import { useState } from 'react';
 import { api, token, ApiError, type Profile } from '../api';
-import { generateMnemonic, deriveAccounts } from '../wallet';
+import { generateMnemonic, validateMnemonic, deriveAccounts } from '../wallet';
 import { walletSession } from '../walletSession';
 
 type Step = 'login' | 'register' | 'phrase' | 'verify';
 
 export function Auth({ onAuthed }: { onAuthed: (p: Profile) => void }) {
   const [step, setStep] = useState<Step>('login');
+  const [importMode, setImportMode] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [passphrase, setPassphrase] = useState(''); // optional BIP-39 25th word
+  const [importPhrase, setImportPhrase] = useState('');
   const [code, setCode] = useState('');
   const [totp, setTotp] = useState('');
   const [needTotp, setNeedTotp] = useState(false);
@@ -40,9 +43,9 @@ export function Auth({ onAuthed }: { onAuthed: (p: Profile) => void }) {
   const doRegister = () =>
     run(async () => {
       if (password !== confirm) throw new Error('Passwords do not match');
-      // Generate the wallet IN THE BROWSER. Only public material goes to the server.
-      const m = generateMnemonic();
-      const acct = deriveAccounts(m);
+      const m = importMode ? importPhrase.trim() : generateMnemonic();
+      if (importMode && !validateMnemonic(m)) throw new Error('Invalid recovery phrase');
+      const acct = deriveAccounts(m, passphrase); // keys derived IN THE BROWSER
       await api.register(email, password, {
         identityKey: acct.identityKey,
         financeXpub: acct.financeXpub,
@@ -50,15 +53,15 @@ export function Auth({ onAuthed }: { onAuthed: (p: Profile) => void }) {
         identityXpub: acct.identityXpub,
       });
       setMnemonic(m);
-      setStep('phrase');
+      // Imported wallets already have their phrase backed up → skip the write-down step.
+      setStep(importMode ? 'verify' : 'phrase');
     });
 
   async function signIn() {
     try {
       const r = await api.login(email, password, totp || undefined);
       token.set(r.token);
-      // Same-session registration already has the seed in memory → unlocked.
-      if (mnemonic) walletSession.set(mnemonic);
+      if (mnemonic) walletSession.set(mnemonic, passphrase); // same-session: already unlocked
       onAuthed(r.profile);
     } catch (e) {
       if (e instanceof ApiError && e.extra.twoFactorRequired) {
@@ -76,11 +79,34 @@ export function Auth({ onAuthed }: { onAuthed: (p: Profile) => void }) {
       await signIn();
     });
 
+  const Passphrase = () => (
+    <label>
+      Optional passphrase (BIP-39 “25th word”)
+      <input
+        type="password"
+        value={passphrase}
+        onChange={(e) => setPassphrase(e.target.value)}
+        autoComplete="off"
+      />
+      <small className="muted">
+        Extra secret mixed into your keys. Leave blank if unsure — if set, you MUST remember it.
+      </small>
+    </label>
+  );
+
   if (step === 'register') {
     return (
       <section>
-        <h2>Create your wallet</h2>
+        <h2>{importMode ? 'Import a wallet' : 'Create your wallet'}</h2>
         {err && <div className="alert">{err}</div>}
+        <div className="tabs">
+          <button className={`ghost tab ${!importMode ? 'active' : ''}`} onClick={() => setImportMode(false)}>
+            Create new
+          </button>
+          <button className={`ghost tab ${importMode ? 'active' : ''}`} onClick={() => setImportMode(true)}>
+            Import existing
+          </button>
+        </div>
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -111,8 +137,20 @@ export function Auth({ onAuthed }: { onAuthed: (p: Profile) => void }) {
               required
             />
           </label>
+          {importMode && (
+            <label>
+              Recovery phrase (12 or 24 words)
+              <input
+                value={importPhrase}
+                onChange={(e) => setImportPhrase(e.target.value)}
+                autoComplete="off"
+                required
+              />
+            </label>
+          )}
+          <Passphrase />
           <button className="primary" disabled={busy}>
-            {busy ? 'Creating…' : 'Create wallet'}
+            {busy ? 'Working…' : importMode ? 'Import wallet' : 'Create wallet'}
           </button>
         </form>
         <p className="switch">
@@ -128,10 +166,11 @@ export function Auth({ onAuthed }: { onAuthed: (p: Profile) => void }) {
   if (step === 'phrase') {
     return (
       <section>
-        <h2>Write down your recovery phrase</h2>
+        <h2>Write down your 24-word recovery phrase</h2>
         <p className="warn">
-          These 12 words ARE your wallet — we never see them and cannot recover them for you.
-          Write them down and store them offline. Anyone with them controls your funds.
+          These words ARE your wallet — we never see them and cannot recover them for you. Write
+          them down and store them offline.{' '}
+          {passphrase && 'Also remember your passphrase — it is required and is NOT stored here.'}
         </p>
         <div className="blob">{mnemonic}</div>
         <div className="row">
@@ -141,8 +180,8 @@ export function Auth({ onAuthed }: { onAuthed: (p: Profile) => void }) {
         </div>
         <div className="spacer" />
         <label className="muted" style={{ flexDirection: 'row', gap: 8 }}>
-          <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} /> I have
-          written down my 12 words
+          <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} /> I
+          have written down my recovery phrase{passphrase ? ' and passphrase' : ''}
         </label>
         <div className="spacer" />
         <button className="primary" disabled={!saved} onClick={() => go('verify')}>
@@ -225,7 +264,7 @@ export function Auth({ onAuthed }: { onAuthed: (p: Profile) => void }) {
       <p className="switch">
         No account?{' '}
         <button className="linkbtn" onClick={() => go('register')}>
-          Create one
+          Create or import
         </button>
       </p>
     </section>
