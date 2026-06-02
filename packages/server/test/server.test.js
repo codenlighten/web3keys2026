@@ -317,6 +317,12 @@ test('SmartLedger Login SSO: verify-login → session → revoke; verify-attest'
   assert.equal(vl.status, 200);
   assert.ok(vl.json.valid && vl.json.token && vl.json.exp);
   assert.equal(vl.json.address, address);
+  // 7-day session + portable BAP identity derived from the verified address.
+  assert.equal(vl.json.ttl, 7 * 24 * 3600);
+  const expectBapId = bsv.encoding
+    .Base58(bsv.crypto.Hash.ripemd160(bsv.crypto.Hash.sha256(Buffer.from(address))))
+    .toString();
+  assert.equal(vl.json.bapId, expectBapId);
 
   // a tampered signature is rejected
   const bad = await api('POST', '/api/verify-login', {
@@ -330,6 +336,7 @@ test('SmartLedger Login SSO: verify-login → session → revoke; verify-attest'
   // session check + revoke
   const chk = await api('POST', '/api/check-session', { token: vl.json.token });
   assert.ok(chk.json.valid && chk.json.address === address);
+  assert.equal(chk.json.bapId, expectBapId);
   await api('POST', '/api/revoke-session', { token: vl.json.token });
   assert.equal(
     (await api('POST', '/api/check-session', { token: vl.json.token })).json.valid,

@@ -144,6 +144,11 @@
     if (!address || !signature || !challenge) {
       return Promise.resolve({ status: 'no_callback' })
     }
+    // Portable BAP identity for this address (present when the wallet signs with its
+    // BAP root key). bapId resolves to a profile via SLProfile.resolve; identityKey is
+    // the identity public key. Both are public — never key material.
+    var bapId = params.get('bapId') || null
+    var identityKey = params.get('identityKey') || null
     // Optional consent-shared receive addresses. Present only if the
     // integrator requested them via opts.request AND the user kept the
     // checkbox checked on the approval card. Pure address strings —
@@ -159,7 +164,7 @@
     var domain = location.hostname
     var payload = buildPayload(domain, challenge)
     if (!verify) {
-      return Promise.resolve({ status: 'unverified', address: address, signature: signature, challenge: challenge, payload: payload, ordAddress: ordAddress, finAddress: finAddress })
+      return Promise.resolve({ status: 'unverified', address: address, signature: signature, challenge: challenge, payload: payload, bapId: bapId, identityKey: identityKey, ordAddress: ordAddress, finAddress: finAddress })
     }
     return fetch(authority + '/api/verify-login', {
       method: 'POST',
@@ -170,7 +175,7 @@
       return res.json().then(function (data) {
         if (data && data.valid) {
           if (data.token && data.exp) storeSession(authority, data.token, address, data.exp)
-          return { status: 'ok', address: address, signature: signature, challenge: challenge, payload: payload, ordAddress: ordAddress, finAddress: finAddress, expiresAt: data.exp ? data.exp * 1000 : null }
+          return { status: 'ok', address: address, signature: signature, challenge: challenge, payload: payload, bapId: bapId, identityKey: identityKey, ordAddress: ordAddress, finAddress: finAddress, expiresAt: data.exp ? data.exp * 1000 : null }
         }
         return { status: 'error', reason: (data && data.reason) || 'invalid_signature', address: address, signature: signature, challenge: challenge, payload: payload, ordAddress: ordAddress, finAddress: finAddress }
       })
@@ -258,6 +263,10 @@
       u.searchParams.delete('address')
       u.searchParams.delete('signature')
       u.searchParams.delete('challenge')
+      u.searchParams.delete('bapId')
+      u.searchParams.delete('identityKey')
+      u.searchParams.delete('ordAddress')
+      u.searchParams.delete('finAddress')
       u.searchParams.delete('error')
       history.replaceState(null, '', u.pathname + (u.search ? u.search : '') + u.hash)
     } catch (_) {}

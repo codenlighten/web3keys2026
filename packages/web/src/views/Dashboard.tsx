@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { api, type Profile, type Tx, type Notification } from '../api';
-import { buildSignedTx, encryptBackup } from '../wallet';
+import { buildSignedTx, encryptBackup, identityInfo, buildBapIdTx } from '../wallet';
 import { walletSession } from '../walletSession';
 
 const BSV = (sats: number) => `${(sats / 1e8).toFixed(8)} BSV`;
@@ -247,6 +247,42 @@ function Settings({
   const [code, setCode] = useState('');
   const [phrase, setPhrase] = useState('');
   const [backupPass, setBackupPass] = useState('');
+  const [identity] = useState(() => {
+    try {
+      const s = walletSession.get();
+      return identityInfo(s.mnemonic, s.passphrase);
+    } catch {
+      return null;
+    }
+  });
+  const [publishing, setPublishing] = useState(false);
+
+  // SELF-FUNDED BAP identity publish (experimental — not auto-fired). Writes the user's
+  // BAP ID record on-chain so apps can resolve their profile; the user pays the fee.
+  const publishIdentity = async () => {
+    if (
+      !window.confirm(
+        'Publish your identity on-chain? This spends a small network fee from your wallet ' +
+          'and makes your BAP profile publicly resolvable. (Experimental — verify resolution ' +
+          'on bap.network.)'
+      )
+    )
+      return;
+    setPublishing(true);
+    setErr('');
+    try {
+      const { utxos } = await api.utxos();
+      if (!utxos.length) throw new Error('Fund your wallet first to cover the network fee.');
+      const s = walletSession.get();
+      const rawHex = buildBapIdTx(s.mnemonic, s.passphrase, utxos);
+      const { txid } = await api.broadcast(rawHex);
+      setMsg(`Identity published — ${txid.slice(0, 16)}…`);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Publish failed');
+    } finally {
+      setPublishing(false);
+    }
+  };
 
   const setup2fa = () =>
     api
@@ -282,6 +318,24 @@ function Settings({
 
   return (
     <div>
+      <h2>Digital identity (BAP)</h2>
+      <p className="muted">
+        Your portable identity for signing into other apps with web3keys. Public — safe to share.
+      </p>
+      {identity && (
+        <>
+          <Field label="BAP ID" value={identity.bapId} />
+          <Field label="Identity address" value={identity.address} />
+          <button className="ghost" onClick={publishIdentity} disabled={publishing}>
+            {publishing ? 'Publishing…' : 'Publish identity on-chain'}
+          </button>
+          <p className="muted small">
+            Optional. Makes your profile resolvable on-chain; you pay a small network fee.
+          </p>
+        </>
+      )}
+
+      <div className="spacer" />
       <h2>Encrypted cloud backup</h2>
       <p className="muted">
         Optional. Encrypted in your browser under a passphrase we never see — convenience only.

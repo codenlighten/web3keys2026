@@ -58,8 +58,18 @@ function createApp() {
         },
       },
       crossOriginEmbedderPolicy: false,
+      frameguard: { action: 'deny' }, // X-Frame-Options: DENY (CSP frame-ancestors backs this)
     })
   );
+
+  // Permissions-Policy: deny powerful features outright (helmet doesn't set this).
+  app.use((req, res, next) => {
+    res.setHeader(
+      'Permissions-Policy',
+      'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()'
+    );
+    next();
+  });
 
   app.use(cors());
   app.use(express.json({ limit: '256kb' }));

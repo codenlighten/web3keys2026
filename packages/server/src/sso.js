@@ -19,9 +19,22 @@ const { getRedis, hasRedis } = require('./redis');
  * opaque SSO session tokens — no wallet keys are involved (non-custodial).
  */
 const router = express.Router();
-const SSO_TTL = Number(process.env.SSO_TTL_SEC || 3600);
-const mem = new Map(); // token -> { address, domain, exp }  (fallback when no Redis)
+const SSO_TTL = Number(process.env.SSO_TTL_SEC || 7 * 24 * 3600); // 7 days
+const mem = new Map(); // token -> { address, bapId, domain, exp }  (fallback when no Redis)
 const tkey = (t) => `sso:${t}`;
+
+// bapId = Base58(RIPEMD160(SHA256(asciiBytes(address)))). Derived from the verified
+// sign-in address so the session/profile carry the portable BAP identity. Matches the
+// wallet's identityInfo() and sl-login.js's SLProfile.resolve.
+function bapIdFromAddress(address) {
+  try {
+    const h1 = bsv.crypto.Hash.sha256(Buffer.from(address));
+    const h2 = bsv.crypto.Hash.ripemd160(h1);
+    return bsv.encoding.Base58(h2).toString();
+  } catch {
+    return null;
+  }
+}
 
 function makeLimiter(opts) {
   if (config.env === 'test') return (req, res, next) => next();
@@ -77,8 +90,9 @@ router.post(
     }
     const token = crypto.randomBytes(24).toString('hex');
     const exp = Math.floor(Date.now() / 1000) + SSO_TTL;
-    await putSession(token, { address, domain, exp });
-    res.json({ valid: true, token, exp, address });
+    const bapId = bapIdFromAddress(address);
+    await putSession(token, { address, bapId, domain, exp });
+    res.json({ valid: true, token, exp, ttl: SSO_TTL, address, bapId });
   })
 );
 
@@ -88,7 +102,7 @@ router.post(
   h(async (req, res) => {
     const s = await getSession(req.body.token);
     if (!s) return res.json({ valid: false });
-    res.json({ valid: true, address: s.address, exp: s.exp });
+    res.json({ valid: true, address: s.address, bapId: s.bapId || null, exp: s.exp });
   })
 );
 

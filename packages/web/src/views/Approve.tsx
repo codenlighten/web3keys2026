@@ -81,8 +81,13 @@ export function Approve({ kind }: { kind: Kind }) {
       const { mnemonic, passphrase } = walletSession.get();
       if (kind === 'login') {
         const challenge = params.get('challenge') || '';
-        const { address, signature } = signLogin(mnemonic, passphrase, domain, challenge);
-        const out: Record<string, string> = { address, signature, challenge };
+        const { address, signature, bapId, identityKey } = signLogin(
+          mnemonic,
+          passphrase,
+          domain,
+          challenge
+        );
+        const out: Record<string, string> = { address, signature, challenge, bapId, identityKey };
         if (shareFin || shareOrd) {
           const sc = scopeAddresses(mnemonic, passphrase);
           if (shareFin) out.finAddress = sc.finAddress;
