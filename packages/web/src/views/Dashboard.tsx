@@ -1,5 +1,24 @@
 import { useEffect, useState } from 'react';
+import QRCode from 'qrcode';
 import { api, type Profile, type Tx, type Notification } from '../api';
+
+function Qr({ value }: { value: string }) {
+  const [src, setSrc] = useState('');
+  useEffect(() => {
+    QRCode.toDataURL(value, { margin: 1, width: 180, color: { dark: '#eef2ff', light: '#0e1426' } })
+      .then(setSrc)
+      .catch(() => setSrc(''));
+  }, [value]);
+  return src ? (
+    <img
+      src={src}
+      alt="receive address QR"
+      width={180}
+      height={180}
+      style={{ display: 'block', margin: '8px auto', borderRadius: 10 }}
+    />
+  ) : null;
+}
 
 const BSV = (sats: number) => `${(sats / 1e8).toFixed(8)} BSV`;
 
@@ -135,6 +154,7 @@ function Wallet({
       </div>
       <Field label="Paymail" value={profile.paymail} />
       <Field label="Receive address" value={address} />
+      <Qr value={address} />
       <button className="ghost" onClick={onRotate}>
         New receive address
       </button>
