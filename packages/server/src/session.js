@@ -11,12 +11,10 @@ const { getRedis, hasRedis } = require('./redis');
  * - A SESSION RECORD (Redis if configured, else in-memory) enables cross-node
  *   revocation (logout) and expiry — the JWT is only honoured if its session record
  *   still exists.
- * - An IN-MEMORY per-node VAULT holds the user's unlocked Wallet so signing doesn't
- *   need the password each request. NOTE: this is per-node (Phase 2's threshold custody
- *   removes server-side keys entirely, eliminating the cross-node concern). Until then,
- *   send requests must hit the node that holds the unlock (sticky sessions).
+ * There is NO server-side key vault — the wallet is non-custodial, so the server never
+ * holds a seed or signs. Sessions only authorize read-only data, broadcasting, and
+ * account actions.
  */
-const vault = new Map(); // sid -> { wallet, email, expiresAt }
 const memSessions = new Map(); // sid -> { email, expiresAt } (fallback when no Redis)
 
 const ttlSec = Math.floor(config.sessionTtlMs / 1000);
@@ -63,32 +61,12 @@ async function getSession(sid) {
 async function revokeSession(sid) {
   if (hasRedis()) await getRedis().del(skey(sid));
   else memSessions.delete(sid);
-  vault.delete(sid);
 }
 
-/** Store an unlocked wallet for a session (per-node, in-memory only). */
-function putWallet(sid, email, wallet) {
-  vault.set(sid, { wallet, email, expiresAt: Date.now() + config.sessionTtlMs });
-}
-
-/** Retrieve an unlocked wallet if still live on this node. */
-function getWallet(sid) {
-  const entry = vault.get(sid);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    vault.delete(sid);
-    return null;
-  }
-  return entry.wallet;
-}
-
-/** Periodically evict expired unlocked wallets (defensive seed hygiene). */
+/** Periodically evict expired in-memory session records. */
 function startReaper() {
   const timer = setInterval(() => {
     const now = Date.now();
-    for (const [sid, entry] of vault) {
-      if (now > entry.expiresAt) vault.delete(sid);
-    }
     for (const [sid, rec] of memSessions) {
       if (now > rec.expiresAt) memSessions.delete(sid);
     }
@@ -103,7 +81,5 @@ module.exports = {
   createSession,
   getSession,
   revokeSession,
-  putWallet,
-  getWallet,
   startReaper,
 };

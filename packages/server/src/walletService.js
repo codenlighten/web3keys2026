@@ -1,25 +1,50 @@
 'use strict';
 
-const { Wallet, WhatsOnChainProvider, bsv, threshold } = require('@web3keys/wallet-core');
+const { WhatsOnChainProvider, bsv } = require('@web3keys/wallet-core');
 const { config } = require('./config');
 const db = require('./db');
 const security = require('./security');
-const shares = require('./shares');
 const { ServiceError } = require('./errors');
 const { makeClient } = require('./paymailClient');
 const { sendOtpEmail } = require('./mailer');
 
 /**
- * walletService: registration, OTP verification, login/unlock, and wallet operations.
- *
- * v1 address model: each user has a single deposit address = finance account index 0
- * (m/44'/0'/0'/0/0). This keeps balance/send provably correct against received funds.
- * Address rotation per paymail request is a planned enhancement (the receive_index
- * column and xpub storage already support it).
+ * walletService — NON-CUSTODIAL. The server never generates, holds, or reconstructs any
+ * wallet key. Keys are created and used client-side; at registration the client supplies
+ * only PUBLIC values (xpubs + identity public key). The server's wallet role is limited
+ * to read-only data (addresses/balance/UTXOs derived from the public xpub) and
+ * broadcasting client-signed transactions.
  */
 
 const provider = new WhatsOnChainProvider({ network: config.network });
 const paymailClient = makeClient();
+
+function net() {
+  return provider.network === 'testnet' ? bsv.Networks.testnet : bsv.Networks.livenet;
+}
+
+function deriveFromXpub(xpub, index) {
+  return bsv.HDPublicKey.fromString(xpub)
+    .deriveChild(0)
+    .deriveChild(index)
+    .publicKey.toAddress(net())
+    .toString();
+}
+
+function assertXpub(label, x) {
+  try {
+    bsv.HDPublicKey.fromString(x);
+  } catch {
+    throw new ServiceError(`Invalid ${label}`, 400);
+  }
+}
+function assertPubkey(label, p) {
+  try {
+    bsv.PublicKey.fromString(p);
+  } catch {
+    throw new ServiceError(`Invalid ${label}`, 400);
+  }
+}
 
 function sanitizeAlias(email) {
   return (
@@ -35,7 +60,6 @@ async function uniqueAlias(email) {
   const base = sanitizeAlias(email);
   let alias = base;
   let n = 0;
-
   while (await db.findByAlias(alias)) {
     n += 1;
     alias = `${base}${n}`;
@@ -43,46 +67,12 @@ async function uniqueAlias(email) {
   return alias;
 }
 
-function net() {
-  return provider.network === 'testnet' ? bsv.Networks.testnet : bsv.Networks.livenet;
-}
-
-/** Derive a receive address from the PUBLIC finance xpub at change 0 / index (no seed). */
-function deriveFromXpub(xpub, index) {
-  return bsv.HDPublicKey.fromString(xpub)
-    .deriveChild(0)
-    .deriveChild(index)
-    .publicKey.toAddress(net())
-    .toString();
-}
-
-/** Public deposit address for a stored user (default index 0). */
 function depositAddress(user, index = 0) {
   return deriveFromXpub(user.finance_xpub, index);
 }
 
-/** The user's current rotating receive address (at their stored receive_index). */
 function receiveAddress(user) {
   return deriveFromXpub(user.finance_xpub, user.receive_index || 0);
-}
-
-/**
- * Read-only balance by scanning addresses derived from the public finance xpub (gap
- * limit). Works without the seed — only the xpub is needed.
- */
-async function scanXpubSatoshis(user, { gapLimit = 20, maxIndex = 500 } = {}) {
-  let total = 0;
-  let empty = 0;
-  for (let i = 0; i <= maxIndex && empty < gapLimit; i++) {
-    const utxos = await provider.getUtxos(deriveFromXpub(user.finance_xpub, i));
-    if (!utxos.length) {
-      empty += 1;
-      continue;
-    }
-    empty = 0;
-    total += utxos.reduce((s, u) => s + u.satoshis, 0);
-  }
-  return total;
 }
 
 function publicProfile(user) {
@@ -107,7 +97,11 @@ async function issueOtp(email, purpose) {
   await sendOtpEmail(email, code, purpose);
 }
 
-async function register({ email, password }) {
+/**
+ * Register a NON-CUSTODIAL account. The client generates the wallet and supplies only
+ * public material; the server stores no key/seed/share. Returns the profile (no seed).
+ */
+async function register({ email, password, identityKey, financeXpub, tokensXpub, identityXpub }) {
   email = String(email || '')
     .trim()
     .toLowerCase();
@@ -115,42 +109,26 @@ async function register({ email, password }) {
   if (!password || String(password).length < 8) {
     throw new ServiceError('Password must be at least 8 characters');
   }
+  assertPubkey('identity key', identityKey);
+  assertXpub('finance xpub', financeXpub);
+  assertXpub('tokens xpub', tokensXpub);
+  assertXpub('identity xpub', identityXpub);
   if (await db.findByEmail(email)) throw new ServiceError('Email already registered', 409);
 
-  // Generate the wallet and split its seed 2-of-3. The server stores only the two
-  // service shares (S2 sealed under the password, S3 sealed under the master key) plus
-  // public xpubs/identity key. S1 goes to the user as their recovery share.
-  const wallet = Wallet.generate({ network: config.network });
-  const split = threshold.splitSeed(wallet.mnemonic); // { user, service, ttp }
-  const described = wallet.keyManager.describe();
   const alias = await uniqueAlias(email);
-
   const user = await db.createUser({
     email,
     alias,
     passwordVerifier: security.hashPassword(password),
-    identityPubkey: wallet.identity.identityKey,
-    financeXpub: described.finance.xpub,
-    tokensXpub: described.tokens.xpub,
-    identityXpub: described.identity.xpub,
+    identityPubkey: identityKey,
+    financeXpub,
+    tokensXpub,
+    identityXpub,
     verified: false,
   });
 
-  await db.putUserShare(user.id, shares.sealUserShare(split.service, password)); // S2
-  await db.putTtpShare(user.id, shares.sealTtpShare(split.ttp)); // S3
-
   await issueOtp(email, 'register');
-
-  // The recovery share (S1) is returned exactly once for the user to store off-box.
-  // The full mnemonic is never returned here — it is available via the authenticated
-  // /api/wallet/export escape hatch after login.
-  return {
-    recoveryShare: split.user,
-    backupReminder:
-      'Save this recovery share now — it is shown only once and lets you recover your wallet.',
-    profile: publicProfile(user),
-    otpSent: true,
-  };
+  return { profile: publicProfile(user), otpSent: true };
 }
 
 async function verifyRegistration({ email, code }) {
@@ -177,14 +155,10 @@ async function verifyRegistration({ email, code }) {
 }
 
 /**
- * Authenticate and UNLOCK: verify the password, then reconstruct the seed from the two
- * service shares — S2 (opened with the password) + S3 (opened with the master key) —
- * and return a live Wallet plus the user row. Throws on bad credentials.
- *
- * The seed exists only transiently here, held in the session vault for signing. A DB
- * breach at rest cannot do this: S2 needs the password, S3 needs the (off-DB) master key.
+ * Authenticate an ACCOUNT (not a wallet — there is no server-side key to unlock).
+ * Verifies the password; returns the user row. 2FA is enforced by the caller.
  */
-async function unlock({ email, password }) {
+async function authenticate({ email, password }) {
   email = String(email || '')
     .trim()
     .toLowerCase();
@@ -194,97 +168,106 @@ async function unlock({ email, password }) {
   if (!security.verifyPassword(password, user.password_verifier)) {
     throw new ServiceError('Invalid credentials', 401);
   }
-
-  const [us, ts] = await Promise.all([db.getUserShare(user.id), db.getTtpShare(user.id)]);
-  if (!us || !ts) throw new ServiceError('Wallet shares missing', 500);
-
-  let s2;
-  try {
-    s2 = shares.openUserShare(us, password); // password-gated service share
-  } catch {
-    throw new ServiceError('Invalid credentials', 401);
-  }
-  const s3 = shares.openTtpShare(ts); // master-key-gated TTP share
-  const mnemonic = threshold.reconstruct([s2, s3]);
-  const wallet = Wallet.fromMnemonic(mnemonic, { network: config.network, provider });
-  return { user, wallet };
+  return { user };
 }
 
-/**
- * Recover access using the user's recovery share (S1) when the password is lost.
- * Reconstructs from S1 + S3, then re-splits the seed (so a fresh recovery share is
- * issued and the old one is consumed) and re-seals S2 under the new password. The seed
- * and wallet addresses are unchanged.
- */
-async function recover({ email, recoveryShare, newPassword }) {
-  email = String(email || '')
-    .trim()
-    .toLowerCase();
-  if (!newPassword || String(newPassword).length < 8) {
-    throw new ServiceError('Password must be at least 8 characters');
+// ── read-only chain data (no keys) ──────────────────────────────────────────────
+
+async function scanXpubSatoshis(user, { gapLimit = 20, maxIndex = 500 } = {}) {
+  let total = 0;
+  let empty = 0;
+  for (let i = 0; i <= maxIndex && empty < gapLimit; i++) {
+    // eslint-disable-next-line no-await-in-loop
+    const utxos = await provider.getUtxos(deriveFromXpub(user.finance_xpub, i));
+    if (!utxos.length) {
+      empty += 1;
+      continue;
+    }
+    empty = 0;
+    total += utxos.reduce((s, u) => s + u.satoshis, 0);
   }
-  const user = await db.findByEmail(email);
-  if (!user) throw new ServiceError('Recovery failed', 401);
-  const ts = await db.getTtpShare(user.id);
-  if (!ts) throw new ServiceError('Wallet shares missing', 500);
-
-  let mnemonic;
-  try {
-    mnemonic = threshold.reconstruct([recoveryShare, shares.openTtpShare(ts)]);
-  } catch {
-    throw new ServiceError('Invalid recovery share', 400);
-  }
-
-  // Re-split so the consumed recovery share is replaced and S2 is re-sealed under the
-  // new password (addresses are derived from the unchanged seed, so they don't move).
-  const fresh = threshold.splitSeed(mnemonic);
-  await db.putUserShare(user.id, shares.sealUserShare(fresh.service, newPassword));
-  await db.putTtpShare(user.id, shares.sealTtpShare(fresh.ttp));
-  await db.setPassword(email, security.hashPassword(newPassword));
-
-  return { recoveryShare: fresh.user, profile: publicProfile(user) };
+  return total;
 }
 
 async function getBalance(user) {
-  const confirmed = await scanXpubSatoshis(user);
-  return { confirmed, unconfirmed: 0 };
+  return { confirmed: await scanXpubSatoshis(user), unconfirmed: 0 };
 }
 
-/** Advance the user's rotating receive address and return the new one. */
 async function rotateReceiveAddress(user) {
   const index = await db.bumpReceiveIndex(user.email);
   return { address: deriveFromXpub(user.finance_xpub, index), index };
 }
 
-// ── ordinals (1Sat) ──────────────────────────────────────────────────────────
-
-/** List the session wallet's ordinals (1-sat UTXOs in the tokens account). */
-async function listOrdinals(wallet) {
-  const utxos = await wallet.listOrdinals();
-  return utxos.map((u) => ({ txid: u.txid, vout: u.vout, satoshis: u.satoshis }));
+/**
+ * Spendable UTXOs for the finance account, each tagged with its derivation index so the
+ * CLIENT can derive the matching key and sign locally. The server never signs.
+ */
+async function getSpendableUtxos(user, { gapLimit = 20, maxIndex = 500 } = {}) {
+  const out = [];
+  let empty = 0;
+  for (let i = 0; i <= maxIndex && empty < gapLimit; i++) {
+    const address = deriveFromXpub(user.finance_xpub, i);
+    // eslint-disable-next-line no-await-in-loop
+    const utxos = await provider.getUtxos(address);
+    if (!utxos.length) {
+      empty += 1;
+      continue;
+    }
+    empty = 0;
+    const script = bsv.Script.buildPublicKeyHashOut(new bsv.Address(address)).toHex();
+    for (const u of utxos) {
+      out.push({
+        txid: u.txid,
+        vout: u.vout,
+        satoshis: u.satoshis,
+        script: u.script || script,
+        address,
+        change: 0,
+        index: i,
+      });
+    }
+  }
+  return out;
 }
 
-/** Inscribe a 1Sat Ordinal (funded by finance, owned by the tokens account). */
-async function inscribeOrdinal(wallet, { data, contentType = 'text/plain' }) {
-  const result = await wallet.inscribe({ data, contentType });
-  return { txid: result.broadcastTxid || result.txid, fee: result.fee, vout: result.ordinalVout };
+/** List the user's ordinals (1-sat UTXOs under the tokens xpub) — read-only. */
+async function listOrdinals(user, { gapLimit = 20, maxIndex = 200 } = {}) {
+  const out = [];
+  let empty = 0;
+  for (let i = 0; i <= maxIndex && empty < gapLimit; i++) {
+    const address = bsv.HDPublicKey.fromString(user.tokens_xpub)
+      .deriveChild(0)
+      .deriveChild(i)
+      .publicKey.toAddress(net())
+      .toString();
+    // eslint-disable-next-line no-await-in-loop
+    const utxos = await provider.getOrdinalUtxos(address);
+    if (!utxos.length) {
+      empty += 1;
+      continue;
+    }
+    empty = 0;
+    for (const u of utxos)
+      out.push({ txid: u.txid, vout: u.vout, satoshis: u.satoshis, address, index: i });
+  }
+  return out;
 }
 
-/** Transfer an owned ordinal (1-sat UTXO) to another address. */
-async function transferOrdinal(wallet, { txid, vout, toAddress }) {
-  const result = await wallet.transferOrdinal({
-    ordinalUtxo: { txid, vout, satoshis: 1 },
-    toAddress,
-  });
-  return { txid: result.broadcastTxid || result.txid, fee: result.fee, to: toAddress };
+/** Broadcast a client-signed raw transaction; resolves to txid. */
+async function broadcast(rawHex) {
+  if (typeof rawHex !== 'string' || !/^[0-9a-fA-F]+$/.test(rawHex)) {
+    throw new ServiceError('Invalid transaction hex', 400);
+  }
+  try {
+    return await provider.broadcast(rawHex);
+  } catch (e) {
+    throw new ServiceError(`Broadcast failed: ${e.message}`, 502);
+  }
 }
 
 /**
- * Resolve a recipient (raw address or paymail handle) to a destination, returning either
- * { address } or { script }:
- *   - raw address                 → { address }
- *   - local paymail (our domain)  → { address } from the DB
- *   - external paymail            → { script } via the bsvalias client (payment destination)
+ * Resolve a recipient to a destination the CLIENT will pay: { address } or { script }.
+ * External paymail is resolved server-side (avoids browser CORS to arbitrary hosts).
  */
 async function resolveRecipient(to, { satoshis, senderPaymail } = {}) {
   to = String(to || '').trim();
@@ -295,7 +278,6 @@ async function resolveRecipient(to, { satoshis, senderPaymail } = {}) {
       if (!u) throw new ServiceError(`Unknown paymail ${to}`, 404);
       return { address: depositAddress(u) };
     }
-    // External paymail: resolve a payment destination (locking script) over bsvalias.
     try {
       const script = await paymailClient.getOutputScript(to, {
         satoshis,
@@ -308,32 +290,11 @@ async function resolveRecipient(to, { satoshis, senderPaymail } = {}) {
     }
   }
   try {
-    bsv.Address.fromString(to); // validate
+    bsv.Address.fromString(to);
   } catch {
     throw new ServiceError('Invalid recipient address', 400);
   }
   return { address: to };
-}
-
-/**
- * Send BSV from an unlocked session wallet, gathering UTXOs across ALL the finance
- * account's funded addresses (not just index 0). amount in satoshis. Supports raw
- * addresses, local paymail, and external paymail (paid to a resolved locking script).
- */
-async function send(wallet, { to, satoshis, senderPaymail }) {
-  const amt = Number(satoshis);
-  if (!Number.isInteger(amt) || amt <= 0) throw new ServiceError('Invalid amount', 400);
-  const dest = await resolveRecipient(to, { satoshis: amt, senderPaymail });
-  const output = dest.script
-    ? { script: dest.script, satoshis: amt }
-    : { to: dest.address, satoshis: amt };
-  const result = await wallet.sendFromAccount([output], { account: 'finance' });
-  return {
-    txid: result.broadcastTxid || result.txid,
-    fee: result.fee,
-    to: dest.address || to, // show the typed recipient (paymail) when paying a script
-    satoshis: amt,
-  };
 }
 
 module.exports = {
@@ -341,17 +302,15 @@ module.exports = {
   ServiceError,
   register,
   verifyRegistration,
-  unlock,
-  recover,
+  authenticate,
   getBalance,
-  send,
+  getSpendableUtxos,
+  broadcast,
+  listOrdinals,
+  resolveRecipient,
   publicProfile,
   depositAddress,
   receiveAddress,
   rotateReceiveAddress,
-  listOrdinals,
-  inscribeOrdinal,
-  transferOrdinal,
-  resolveRecipient,
   issueOtp,
 };

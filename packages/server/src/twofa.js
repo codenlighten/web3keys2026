@@ -2,7 +2,7 @@
 
 const { authenticator } = require('otplib');
 const db = require('./db');
-const shares = require('./shares');
+const secrets = require('./secrets');
 const { config } = require('./config');
 const { ServiceError } = require('./errors');
 
@@ -17,14 +17,14 @@ authenticator.options = { window: 1 };
 /** Begin enrollment: generate + store a (not-yet-enabled) secret, return provisioning data. */
 async function setup(user) {
   const secret = authenticator.generateSecret();
-  await db.setTotp(user.email, shares.sealMaster(secret), false);
+  await db.setTotp(user.email, secrets.seal(secret), false);
   const otpauth = authenticator.keyuri(user.email, config.domain, secret);
   return { secret, otpauth };
 }
 
 function openSecret(user) {
   if (!user.totp_enc) throw new ServiceError('2FA not set up', 400);
-  return shares.openMaster(user.totp_enc);
+  return secrets.open(user.totp_enc);
 }
 
 /** Confirm enrollment by verifying a code, then enable enforcement. */
@@ -51,7 +51,7 @@ async function disable(user, code) {
 function verifyLogin(user, code) {
   if (!user.totp_enabled) return;
   if (!code) throw new ServiceError('2FA code required', 401, { twoFactorRequired: true });
-  const secret = shares.openMaster(user.totp_enc);
+  const secret = secrets.open(user.totp_enc);
   if (!authenticator.verify({ token: String(code), secret })) {
     throw new ServiceError('Invalid 2FA code', 401);
   }

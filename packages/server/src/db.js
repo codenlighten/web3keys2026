@@ -41,38 +41,47 @@ async function createUser(u) {
   );
 }
 
-// ── threshold shares (S2 in user_shares, S3 in ttp_shares — separate stores) ──────
+// ── opaque encrypted backup (Tier 1) — server CANNOT decrypt ──────────────────────
 
-async function putUserShare(userId, s) {
+async function putBackup(userId, { scheme, ciphertext }) {
   return query(
-    `INSERT INTO user_shares (user_id, enc_salt, iv, tag, ciphertext)
-       VALUES ($1,$2,$3,$4,$5)
+    `INSERT INTO backups (user_id, scheme, ciphertext, updated_at)
+       VALUES ($1,$2,$3, now())
      ON CONFLICT (user_id) DO UPDATE
-       SET enc_salt = EXCLUDED.enc_salt, iv = EXCLUDED.iv, tag = EXCLUDED.tag,
-           ciphertext = EXCLUDED.ciphertext`,
-    [userId, s.encSalt, s.iv, s.tag, s.ciphertext]
+       SET scheme = EXCLUDED.scheme, ciphertext = EXCLUDED.ciphertext, updated_at = now()`,
+    [userId, scheme, ciphertext]
   );
 }
 
-async function getUserShare(userId) {
-  const r = await one('SELECT * FROM user_shares WHERE user_id = $1', [userId]);
-  return r ? { encSalt: r.enc_salt, iv: r.iv, tag: r.tag, ciphertext: r.ciphertext } : null;
+async function getBackup(userId) {
+  const r = await one('SELECT scheme, ciphertext FROM backups WHERE user_id = $1', [userId]);
+  return r || null;
 }
 
-async function putTtpShare(userId, s) {
-  return query(
-    `INSERT INTO ttp_shares (user_id, iv, tag, ciphertext, key_version)
-       VALUES ($1,$2,$3,$4,$5)
-     ON CONFLICT (user_id) DO UPDATE
-       SET iv = EXCLUDED.iv, tag = EXCLUDED.tag, ciphertext = EXCLUDED.ciphertext,
-           key_version = EXCLUDED.key_version`,
-    [userId, s.iv, s.tag, s.ciphertext, s.keyVersion || 1]
+// ── WebAuthn credentials (passkeys) ──────────────────────────────────────────────
+
+async function addCredential(c) {
+  return one(
+    `INSERT INTO webauthn_credentials (user_id, credential_id, public_key, counter, transports)
+       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+    [c.userId, c.credentialId, c.publicKey, c.counter || 0, c.transports || null]
   );
 }
 
-async function getTtpShare(userId) {
-  const r = await one('SELECT * FROM ttp_shares WHERE user_id = $1', [userId]);
-  return r ? { iv: r.iv, tag: r.tag, ciphertext: r.ciphertext, keyVersion: r.key_version } : null;
+async function getCredentials(userId) {
+  const { rows } = await query('SELECT * FROM webauthn_credentials WHERE user_id = $1', [userId]);
+  return rows;
+}
+
+async function getCredentialById(credentialId) {
+  return one('SELECT * FROM webauthn_credentials WHERE credential_id = $1', [credentialId]);
+}
+
+async function updateCredentialCounter(credentialId, counter) {
+  return query('UPDATE webauthn_credentials SET counter = $2 WHERE credential_id = $1', [
+    credentialId,
+    counter,
+  ]);
 }
 
 async function findByEmail(email) {
@@ -242,10 +251,12 @@ module.exports = {
   setPassword,
   setTotp,
   bumpReceiveIndex,
-  putUserShare,
-  getUserShare,
-  putTtpShare,
-  getTtpShare,
+  putBackup,
+  getBackup,
+  addCredential,
+  getCredentials,
+  getCredentialById,
+  updateCredentialCounter,
   insertTransaction,
   listTransactions,
   incomingOutpoints,

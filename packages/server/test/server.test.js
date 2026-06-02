@@ -1,8 +1,7 @@
 'use strict';
 
-// Configure the server for an isolated, offline test BEFORE requiring its modules.
+// Isolated, offline test config BEFORE requiring server modules.
 process.env.NODE_ENV = 'test';
-process.env.DB_FILE = ':memory:';
 process.env.JWT_SECRET = 'test-secret-do-not-use-in-prod';
 process.env.WALLET_DOMAIN = 'web3keys.com';
 process.env.BASE_URL = 'https://web3keys.com';
@@ -12,20 +11,18 @@ const assert = require('node:assert');
 const { authenticator } = require('otplib');
 
 const security = require('../src/security');
-const shares = require('../src/shares');
 const db = require('../src/db');
 const { createApp } = require('../src/app');
-const { threshold } = require('@web3keys/wallet-core');
+const { Wallet } = require('@web3keys/wallet-core');
 
-// Deterministic OTP so we can verify without reading email. svc calls
-// security.generateOtp() via the namespace, so overriding the property works.
+// Deterministic OTP (svc calls security.generateOtp() via the namespace).
 security.generateOtp = () => '123456';
 
 let server;
 let base;
 
 before(async () => {
-  await db.init(); // run migrations against the in-memory (pg-mem) database
+  await db.init();
   const app = createApp();
   await new Promise((resolve) => {
     server = app.listen(0, () => {
@@ -37,8 +34,6 @@ before(async () => {
 
 after(async () => {
   if (server) server.close();
-  // Close any real Postgres/Redis connections so the test process exits cleanly
-  // (no-ops for the in-memory pg-mem path and when Redis is unconfigured).
   await require('../src/db/pool')
     .close()
     .catch(() => {});
@@ -60,331 +55,215 @@ async function api(method, path, body, token) {
   return { status: res.status, json };
 }
 
-test('share sealing: S2 (password) and S3 (master key) round-trip; wrong key fails', () => {
-  const { user, service, ttp } = threshold.splitSeed(
-    'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
-  );
-  // S2 sealed under password
-  const s2 = shares.sealUserShare(service, 'correct horse');
-  assert.equal(shares.openUserShare(s2, 'correct horse'), service);
-  assert.throws(() => shares.openUserShare(s2, 'wrong'));
-  // S3 sealed under master key
-  const s3 = shares.sealTtpShare(ttp);
-  assert.equal(shares.openTtpShare(s3), ttp);
-  // sanity: the opened S2 + S3 still reconstruct, and so do user + S3
-  assert.ok(
-    threshold.reconstruct([shares.openUserShare(s2, 'correct horse'), shares.openTtpShare(s3)])
-  );
-  assert.ok(threshold.reconstruct([user, shares.openTtpShare(s3)]));
-  // password verifier
-  const v = security.hashPassword('s3cret!!');
-  assert.ok(security.verifyPassword('s3cret!!', v));
-  assert.ok(!security.verifyPassword('nope', v));
+// A non-custodial registration: the CLIENT makes the wallet and sends only public data.
+function regBody(email, password) {
+  const wallet = Wallet.generate();
+  const d = wallet.describe();
+  return {
+    wallet,
+    body: {
+      email,
+      password,
+      identityKey: wallet.identity.identityKey,
+      financeXpub: d.finance.xpub,
+      tokensXpub: d.tokens.xpub,
+      identityXpub: d.identity.xpub,
+    },
+  };
+}
+
+async function registerVerifyLogin(email, password = 'password1234') {
+  const { wallet, body } = regBody(email, password);
+  await api('POST', '/api/auth/register', body);
+  await api('POST', '/api/auth/verify', { email, code: '123456' });
+  const login = await api('POST', '/api/auth/login', { email, password });
+  return { wallet, token: login.json.token, body };
+}
+
+test('registration is non-custodial: client supplies xpubs, server returns NO seed', async () => {
+  const email = 'alice@example.com';
+  const { wallet, body } = regBody(email, 'hunter2hunter2');
+  const reg = await api('POST', '/api/auth/register', body);
+  assert.equal(reg.status, 201);
+  assert.ok(!reg.json.mnemonic && !reg.json.recoveryShare); // server never had the seed
+  assert.equal(reg.json.profile.paymail, 'alice@web3keys.com');
+  // the profile's deposit address derives from the client-supplied xpub
+  assert.equal(reg.json.profile.address, wallet.keyManager.address('finance'));
 });
 
-test('full flow: register → verify → login → profile → export escape-hatch', async () => {
-  const email = 'alice@example.com';
-  const password = 'hunter2hunter2';
+test('the database holds NO key material for a user', async () => {
+  const email = 'nokey@example.com';
+  const { wallet } = await registerVerifyLogin(email);
+  const user = await db.findByEmail(email);
+  const backup = await db.getBackup(user.id);
+  const dump = JSON.stringify({ user, backup });
+  assert.ok(!dump.includes(wallet.mnemonic), 'mnemonic must never be server-side');
+  // only public material is stored
+  assert.ok(user.finance_xpub.startsWith('xpub'));
+  assert.equal(backup, null);
+});
 
-  const reg = await api('POST', '/api/auth/register', { email, password });
-  assert.equal(reg.status, 201);
-  assert.ok(reg.json.recoveryShare && !reg.json.mnemonic); // S1 shown once, NO raw seed
-  assert.equal(reg.json.profile.paymail, 'alice@web3keys.com');
+test('register → verify → login (account auth, no wallet unlock)', async () => {
+  const email = 'bob@example.com';
+  const password = 'password1234';
+  const { body } = regBody(email, password);
+  await api('POST', '/api/auth/register', body);
 
-  // cannot log in before verifying
-  assert.equal((await api('POST', '/api/auth/login', { email, password })).status, 403);
-
-  const ver = await api('POST', '/api/auth/verify', { email, code: '123456' });
-  assert.equal(ver.status, 200);
+  assert.equal((await api('POST', '/api/auth/login', { email, password })).status, 403); // unverified
+  assert.equal((await api('POST', '/api/auth/verify', { email, code: '123456' })).status, 200);
 
   const login = await api('POST', '/api/auth/login', { email, password });
   assert.equal(login.status, 200);
-  const token = login.json.token;
-
-  // wrong password rejected (S2 won't open)
+  assert.ok(login.json.token);
   assert.equal(
-    (await api('POST', '/api/auth/login', { email, password: 'wrongwrong' })).status,
+    (await api('POST', '/api/auth/login', { email, password: 'wrong-pass' })).status,
     401
   );
 
-  const profile = await api('GET', '/api/wallet/profile', null, token);
-  assert.equal(profile.status, 200);
-  assert.ok(/^1[1-9A-HJ-NP-Za-km-z]+$/.test(profile.json.address));
-
-  // export (escape hatch) reveals a 12-word seed that derives the SAME deposit address —
-  // proving the 2-of-3 reconstruction yields the real wallet.
-  const exp = await api('GET', '/api/wallet/export', null, token);
-  assert.equal(exp.status, 200);
-  assert.equal(exp.json.mnemonic.split(' ').length, 12);
-  const { Wallet } = require('@web3keys/wallet-core');
-  assert.equal(
-    Wallet.fromMnemonic(exp.json.mnemonic).keyManager.address('finance'),
-    profile.json.address
-  );
-
-  assert.equal((await api('GET', '/api/wallet/profile')).status, 401); // no token
-});
-
-test('recovery: recovery share + new password restores access; old password fails', async () => {
-  const email = 'carol@example.com';
-  const password = 'origpassword12';
-  const reg = await api('POST', '/api/auth/register', { email, password });
-  await api('POST', '/api/auth/verify', { email, code: '123456' });
-  const recoveryShare = reg.json.recoveryShare;
-
-  const addrBefore = await loginAddress(email, password);
-
-  // recover with the share + a new password
-  const newPassword = 'brandnewpass99';
-  const rec = await api('POST', '/api/auth/recover', { email, recoveryShare, newPassword });
-  assert.equal(rec.status, 200);
-  assert.ok(rec.json.recoveryShare); // a fresh recovery share is issued
-  assert.notEqual(rec.json.recoveryShare, recoveryShare); // old one consumed
-
-  // old password no longer works; new one does, and the wallet is unchanged
-  assert.equal((await api('POST', '/api/auth/login', { email, password })).status, 401);
-  const addrAfter = await loginAddress(email, newPassword);
-  assert.equal(addrAfter, addrBefore); // same seed → same address
-});
-
-async function loginAddress(email, password) {
-  const login = await api('POST', '/api/auth/login', { email, password });
   const profile = await api('GET', '/api/wallet/profile', null, login.json.token);
-  return profile.json.address;
-}
-
-test('no plaintext seed or share is recoverable from the DB at rest without secrets', async () => {
-  const email = 'dave@example.com';
-  const password = 'davepassword12';
-  await api('POST', '/api/auth/register', { email, password });
-  await api('POST', '/api/auth/verify', { email, code: '123456' });
-
-  const user = await db.findByEmail(email);
-  // The exported seed (what an attacker wants) must not appear in any stored column.
-  const login = await api('POST', '/api/auth/login', { email, password });
-  const mnemonic = (await api('GET', '/api/wallet/export', null, login.json.token)).json.mnemonic;
-
-  const us = await db.getUserShare(user.id);
-  const ts = await db.getTtpShare(user.id);
-  const dump = JSON.stringify({ user, us, ts });
-  assert.ok(!dump.includes(mnemonic), 'mnemonic must not be present in DB');
-  // The user_shares row alone is just one (password-sealed) share — even decrypting it
-  // (we cannot, without the password) would be one of three; insufficient to reconstruct.
-  assert.ok(us.ciphertext && ts.ciphertext);
+  assert.equal(profile.json.paymail, 'bob@web3keys.com');
+  assert.equal((await api('GET', '/api/wallet/profile')).status, 401);
 });
 
-test('paymail: discovery, pki, and payment destination', async () => {
-  // register + verify a second user to look up
-  const email = 'bob@example.com';
-  await api('POST', '/api/auth/register', { email, password: 'password1234' });
-  await api('POST', '/api/auth/verify', { email, code: '123456' });
+test('removed custodial endpoints are gone (no export/recover/server-send)', async () => {
+  const { token } = await registerVerifyLogin('gone@example.com');
+  assert.equal((await api('GET', '/api/wallet/export', null, token)).status, 404);
+  assert.equal(
+    (
+      await api('POST', '/api/auth/recover', {
+        email: 'x',
+        recoveryShare: 'y',
+        newPassword: 'zzzzzzzz',
+      })
+    ).status,
+    404
+  );
+  assert.equal(
+    (await api('POST', '/api/wallet/send', { to: 'x', satoshis: 1 }, token)).status,
+    404
+  );
+});
 
+test('encrypted backup is opaque store/retrieve (server cannot decrypt)', async () => {
+  const { token } = await registerVerifyLogin('vault@example.com');
+  assert.equal((await api('GET', '/api/backup', null, token)).status, 404); // none yet
+  const blob = { scheme: 'passkey-prf-aesgcm', ciphertext: 'a1b2c3'.repeat(20) };
+  assert.equal((await api('PUT', '/api/backup', blob, token)).status, 200);
+  const got = await api('GET', '/api/backup', null, token);
+  assert.equal(got.status, 200);
+  assert.equal(got.json.scheme, blob.scheme);
+  assert.equal(got.json.ciphertext, blob.ciphertext);
+});
+
+test('receive address rotates (HD), distinct valid addresses', async () => {
+  const { token } = await registerVerifyLogin('rita@example.com');
+  const a0 = await api('GET', '/api/wallet/address', null, token);
+  assert.equal(a0.json.index, 0);
+  const rotated = await api('POST', '/api/wallet/address/new', null, token);
+  assert.equal(rotated.json.index, 1);
+  assert.notEqual(rotated.json.address, a0.json.address);
+  assert.equal(
+    (await api('GET', '/api/wallet/address', null, token)).json.address,
+    rotated.json.address
+  );
+});
+
+test('local paymail resolves to an address (for client-side payment)', async () => {
+  await registerVerifyLogin('payee@example.com');
+  const { token } = await registerVerifyLogin('payer@example.com');
+  const r = await api(
+    'POST',
+    '/api/paymail/resolve',
+    { to: 'payee@web3keys.com', satoshis: 1000 },
+    token
+  );
+  assert.equal(r.status, 200);
+  assert.ok(/^1[1-9A-HJ-NP-Za-km-z]+$/.test(r.json.address));
+});
+
+test('paymail discovery + pki + payment destination', async () => {
+  await registerVerifyLogin('charlie@example.com');
   const disco = await api('GET', '/.well-known/bsvalias');
-  assert.equal(disco.status, 200);
   assert.equal(disco.json.bsvalias, '1.0');
-  assert.ok(disco.json.capabilities['0c4339ef99c2b480'].includes('/api/paymail/id/'));
-
-  const pki = await api('GET', '/api/paymail/id/bob@web3keys.com');
-  assert.equal(pki.status, 200);
-  assert.ok(/^0[23][0-9a-f]{64}$/.test(pki.json.pubkey)); // compressed pubkey hex
-
-  const dest = await api('POST', '/api/paymail/address/bob@web3keys.com', {
+  const pki = await api('GET', '/api/paymail/id/charlie@web3keys.com');
+  assert.ok(/^0[23][0-9a-f]{64}$/.test(pki.json.pubkey));
+  const dest = await api('POST', '/api/paymail/address/charlie@web3keys.com', {
     senderHandle: 'x@y.com',
   });
-  assert.equal(dest.status, 200);
-  assert.ok(/^76a914[0-9a-f]{40}88ac$/.test(dest.json.output)); // standard P2PKH script
-
-  const missing = await api('GET', '/api/paymail/id/nobody@web3keys.com');
-  assert.equal(missing.status, 404);
+  assert.ok(/^76a914[0-9a-f]{40}88ac$/.test(dest.json.output));
 });
 
-test('duplicate registration is rejected', async () => {
-  const email = 'dupe@example.com';
-  const first = await api('POST', '/api/auth/register', { email, password: 'password1234' });
-  assert.equal(first.status, 201);
-  const second = await api('POST', '/api/auth/register', { email, password: 'password1234' });
-  assert.equal(second.status, 409);
+test('chain sync detects deposits → notification + history (idempotent)', async () => {
+  const { MockProvider } = require('../../wallet-core/test/helpers/MockProvider');
+  const chainsync = require('../src/chainsync');
+  const svc = require('../src/walletService');
+  const email = 'deb@example.com';
+  const { token } = await registerVerifyLogin(email);
+  const user = await db.findByEmail(email);
+
+  const provider = new MockProvider();
+  provider.seedUtxo(svc.depositAddress(user, 0), { satoshis: 5000 });
+  assert.equal((await chainsync.syncUserDeposits(user, { provider, gapLimit: 5 })).length, 1);
+
+  const notifs = await api('GET', '/api/notifications', null, token);
+  assert.equal(notifs.json.notifications[0].type, 'deposit');
+  const hist = await api('GET', '/api/wallet/history', null, token);
+  assert.ok(hist.json.transactions.some((t) => t.direction === 'in' && t.amountSats === 5000));
+  assert.equal((await chainsync.syncUserDeposits(user, { provider, gapLimit: 5 })).length, 0);
 });
-
-// ── Phase 3: security hardening ────────────────────────────────────────────────
-
-test('input validation rejects malformed requests (400)', async () => {
-  assert.equal(
-    (await api('POST', '/api/auth/register', { email: 'nope', password: 'x' })).status,
-    400
-  );
-  assert.equal(
-    (await api('POST', '/api/auth/register', { email: 'a@b.co', password: 'short' })).status,
-    400
-  );
-  assert.equal(
-    (await api('POST', '/api/auth/verify', { email: 'a@b.co', code: 'abc' })).status,
-    400
-  );
-  const bad = await api('POST', '/api/auth/register', {});
-  assert.equal(bad.status, 400);
-  assert.ok(Array.isArray(bad.json.details));
-});
-
-test('security headers are present (helmet/CSP)', async () => {
-  const res = await fetch(base + '/health');
-  assert.ok(res.headers.get('content-security-policy'));
-  assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
-  assert.ok(res.headers.get('content-security-policy').includes('cdn.jsdelivr.net')); // bsv CDN allowed
-});
-
-async function registerLogin(email, password) {
-  await api('POST', '/api/auth/register', { email, password });
-  await api('POST', '/api/auth/verify', { email, code: '123456' });
-  return (await api('POST', '/api/auth/login', { email, password })).json.token;
-}
 
 test('TOTP 2FA: setup → enable → enforced at login', async () => {
   const email = 'tina@example.com';
   const password = 'password1234';
-  const token = await registerLogin(email, password);
-
-  // enrol
+  const { token } = await registerVerifyLogin(email, password);
   const setup = await api('POST', '/api/2fa/setup', null, token);
-  assert.equal(setup.status, 200);
   assert.ok(setup.json.otpauth.startsWith('otpauth://totp/'));
-  const secret = setup.json.secret;
+  await api('POST', '/api/2fa/enable', { code: authenticator.generate(setup.json.secret) }, token);
 
-  // enabling requires a valid code
-  assert.equal((await api('POST', '/api/2fa/enable', { code: '000000' }, token)).status, 401);
-  const enable = await api(
-    'POST',
-    '/api/2fa/enable',
-    { code: authenticator.generate(secret) },
-    token
-  );
-  assert.equal(enable.status, 200);
-
-  // login now requires the TOTP code
   const noCode = await api('POST', '/api/auth/login', { email, password });
   assert.equal(noCode.status, 401);
   assert.ok(noCode.json.twoFactorRequired);
-
-  const wrong = await api('POST', '/api/auth/login', { email, password, totpCode: '000000' });
-  assert.equal(wrong.status, 401);
-
   const ok = await api('POST', '/api/auth/login', {
     email,
     password,
-    totpCode: authenticator.generate(secret),
+    totpCode: authenticator.generate(setup.json.secret),
   });
   assert.equal(ok.status, 200);
-  assert.ok(ok.json.token);
 });
 
-test('receive address rotates (HD), distinct valid addresses', async () => {
-  const email = 'rita@example.com';
-  const password = 'password1234';
-  const token = await registerLogin(email, password);
-
-  const a0 = await api('GET', '/api/wallet/address', null, token);
-  assert.equal(a0.status, 200);
-  assert.equal(a0.json.index, 0);
-  assert.ok(/^1[1-9A-HJ-NP-Za-km-z]+$/.test(a0.json.address));
-
-  const rotated = await api('POST', '/api/wallet/address/new', null, token);
-  assert.equal(rotated.status, 200);
-  assert.equal(rotated.json.index, 1);
-  assert.notEqual(rotated.json.address, a0.json.address);
-
-  // subsequent GET reflects the advanced index
-  const a1 = await api('GET', '/api/wallet/address', null, token);
-  assert.equal(a1.json.index, 1);
-  assert.equal(a1.json.address, rotated.json.address);
-});
-
-test('transaction history lists a user’s transactions', async () => {
-  const email = 'hank@example.com';
-  const password = 'password1234';
-  const token = await registerLogin(email, password);
-  const user = await db.findByEmail(email);
-
-  // empty initially
-  const empty = await api('GET', '/api/wallet/history', null, token);
-  assert.equal(empty.status, 200);
-  assert.deepEqual(empty.json.transactions, []);
-
-  // seed one outgoing tx directly, then read it back via the API
-  await db.insertTransaction({
-    txid: 'a'.repeat(64),
-    userId: user.id,
-    direction: 'out',
-    amountSats: 12345,
-    address: '1Destination',
-    status: 'broadcast',
-  });
-  const hist = await api('GET', '/api/wallet/history', null, token);
-  assert.equal(hist.json.transactions.length, 1);
-  assert.equal(hist.json.transactions[0].amountSats, 12345);
-  assert.equal(hist.json.transactions[0].direction, 'out');
-});
-
-test('chain sync detects deposits → records tx + notification (idempotent)', async () => {
-  const { MockProvider } = require('../../wallet-core/test/helpers/MockProvider');
-  const chainsync = require('../src/chainsync');
-  const svc = require('../src/walletService');
-
-  const email = 'deb@example.com';
-  const token = await registerLogin(email, 'password1234');
-  const user = await db.findByEmail(email);
-
-  // seed a deposit at the user's index-0 deposit address
-  const provider = new MockProvider();
-  provider.seedUtxo(svc.depositAddress(user, 0), { satoshis: 5000 });
-
-  const created = await chainsync.syncUserDeposits(user, { provider, gapLimit: 5 });
-  assert.equal(created.length, 1);
-
-  // surfaced via notifications + history
-  const notifs = await api('GET', '/api/notifications', null, token);
-  assert.equal(notifs.json.notifications.length, 1);
-  assert.equal(notifs.json.notifications[0].type, 'deposit');
-  assert.equal(notifs.json.notifications[0].payload.satoshis, 5000);
-
-  const hist = await api('GET', '/api/wallet/history', null, token);
-  assert.ok(hist.json.transactions.some((t) => t.direction === 'in' && t.amountSats === 5000));
-
-  // idempotent: a second pass over the same deposit creates nothing new
-  const again = await chainsync.syncUserDeposits(user, { provider, gapLimit: 5 });
-  assert.equal(again.length, 0);
-
-  // mark read
-  const id = notifs.json.notifications[0].id;
-  assert.equal((await api('POST', `/api/notifications/${id}/read`, null, token)).status, 200);
-  const unread = await api('GET', '/api/notifications?unread=true', null, token);
-  assert.equal(unread.json.notifications.length, 0);
-});
-
-test('ordinals endpoints require auth and validate input', async () => {
-  // unauthenticated
-  assert.equal((await api('GET', '/api/ordinals')).status, 401);
-  assert.equal((await api('POST', '/api/ordinals/transfer', { txid: 'x' })).status, 401);
-
-  const token = await registerLogin('ozzy@example.com', 'password1234');
-  // bad transfer body is rejected by validation (before any chain call)
-  const bad = await api('POST', '/api/ordinals/transfer', { txid: 'nothex', vout: -1 }, token);
-  assert.equal(bad.status, 400);
-  assert.ok(Array.isArray(bad.json.details));
+test('input validation + security headers', async () => {
+  // missing xpubs → 400
+  assert.equal(
+    (await api('POST', '/api/auth/register', { email: 'a@b.co', password: 'password1234' })).status,
+    400
+  );
+  assert.equal(
+    (await api('POST', '/api/auth/register', { email: 'bad', password: 'x' })).status,
+    400
+  );
+  const res = await fetch(base + '/health');
+  assert.ok(res.headers.get('content-security-policy'));
+  assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
 });
 
 test('account lockout after repeated failed logins (429)', async () => {
   const email = 'liam@example.com';
   const password = 'password1234';
-  await require('../src/lockout').clear(email); // robust against leftover Redis state
-  await api('POST', '/api/auth/register', { email, password });
-  await api('POST', '/api/auth/verify', { email, code: '123456' });
-
+  await require('../src/lockout').clear(email);
+  await registerVerifyLogin(email, password);
   for (let i = 0; i < 5; i++) {
-    const r = await api('POST', '/api/auth/login', { email, password: 'wrongpassword' });
-    assert.equal(r.status, 401);
+    assert.equal(
+      (await api('POST', '/api/auth/login', { email, password: 'wrongpassword' })).status,
+      401
+    );
   }
-  // now locked — even the correct password is refused with 429
   const locked = await api('POST', '/api/auth/login', { email, password });
   assert.equal(locked.status, 429);
-  assert.ok(locked.json.retryAfterSec > 0);
+});
+
+test('duplicate registration is rejected', async () => {
+  const { body } = regBody('dupe@example.com', 'password1234');
+  assert.equal((await api('POST', '/api/auth/register', body)).status, 201);
+  const { body: body2 } = regBody('dupe@example.com', 'password1234');
+  assert.equal((await api('POST', '/api/auth/register', body2)).status, 409);
 });

@@ -10,7 +10,6 @@ const session = require('./session');
 const twofa = require('./twofa');
 const lockout = require('./lockout');
 const { validate } = require('./middleware');
-const { ServiceError } = require('./errors');
 const { getRedis, hasRedis } = require('./redis');
 
 const router = express.Router();
@@ -29,22 +28,19 @@ function makeLimiter(opts) {
 
 const authLimiter = makeLimiter({ windowMs: 15 * 60 * 1000, max: 30 });
 
-/** Wrap async handlers so rejections hit the error middleware. */
 const h = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
-
 const audit = (req, action, email, detail) =>
   db.audit({ email, action, ip: req.ip, detail }).catch(() => {});
 
-// ── auth ────────────────────────────────────────────────────────────────────
+// ── auth (account only — keys are client-side, non-custodial) ─────────────────────
 
 router.post(
   '/api/auth/register',
   authLimiter,
   validate(schemas.register),
   h(async (req, res) => {
-    const { email, password } = req.body;
-    const result = await svc.register({ email, password });
-    audit(req, 'register', email);
+    const result = await svc.register(req.body);
+    audit(req, 'register', req.body.email);
     res.status(201).json(result);
   })
 );
@@ -54,9 +50,8 @@ router.post(
   authLimiter,
   validate(schemas.verify),
   h(async (req, res) => {
-    const { email, code } = req.body;
-    const profile = await svc.verifyRegistration({ email, code });
-    audit(req, 'verify', email);
+    const profile = await svc.verifyRegistration(req.body);
+    audit(req, 'verify', req.body.email);
     res.json({ verified: true, profile });
   })
 );
@@ -68,7 +63,7 @@ router.post(
   h(async (req, res) => {
     const { email } = req.body;
     if (await db.findByEmail(email)) await svc.issueOtp(email, 'register');
-    res.json({ otpSent: true }); // do not leak whether the email exists
+    res.json({ otpSent: true });
   })
 );
 
@@ -81,9 +76,8 @@ router.post(
     await lockout.assertNotLocked(email);
 
     let user;
-    let wallet;
     try {
-      ({ user, wallet } = await svc.unlock({ email, password }));
+      ({ user } = await svc.authenticate({ email, password }));
     } catch (e) {
       if (e.status === 401) {
         await lockout.recordFailure(email);
@@ -92,8 +86,6 @@ router.post(
       throw e;
     }
 
-    // Enforce 2FA when enabled. A missing code (twoFactorRequired) is the expected first
-    // step and is NOT counted as a failure; an invalid code is.
     try {
       twofa.verifyLogin(user, totpCode);
     } catch (e) {
@@ -107,22 +99,8 @@ router.post(
     await lockout.clear(email);
     const { token, sid } = session.issueToken(user.email);
     await session.createSession(sid, user.email);
-    session.putWallet(sid, user.email, wallet);
     audit(req, 'login_success', email);
     res.json({ token, profile: svc.publicProfile(user) });
-  })
-);
-
-router.post(
-  '/api/auth/recover',
-  authLimiter,
-  validate(schemas.recover),
-  h(async (req, res) => {
-    const { email, recoveryShare, newPassword } = req.body;
-    const result = await svc.recover({ email, recoveryShare, newPassword });
-    await lockout.clear(email);
-    audit(req, 'recover', email);
-    res.json(result);
   })
 );
 
@@ -130,10 +108,9 @@ router.post(
 
 const authed = h(async (req, res, next) => {
   const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-  const claims = token && session.verifyToken(token);
+  const tok = header.startsWith('Bearer ') ? header.slice(7) : null;
+  const claims = tok && session.verifyToken(tok);
   if (!claims) return res.status(401).json({ error: 'unauthorized' });
-  // The JWT is only honoured while its session record exists (enables revocation).
   const rec = await session.getSession(claims.sid);
   if (!rec) return res.status(401).json({ error: 'session revoked or expired' });
   req.claims = claims;
@@ -157,39 +134,35 @@ router.post(
   '/api/2fa/setup',
   authed,
   h(async (req, res) => {
-    const { otpauth, secret } = await twofa.setup(req.user);
+    const r = await twofa.setup(req.user);
     audit(req, '2fa_setup', req.user.email);
-    res.json({ otpauth, secret });
+    res.json(r);
   })
 );
-
 router.post(
   '/api/2fa/enable',
   authed,
   validate(schemas.twoFactorEnable),
   h(async (req, res) => {
-    const result = await twofa.enable(req.user, req.body.code);
+    const r = await twofa.enable(req.user, req.body.code);
     audit(req, '2fa_enable', req.user.email);
-    res.json(result);
+    res.json(r);
   })
 );
-
 router.post(
   '/api/2fa/disable',
   authed,
   validate(schemas.twoFactorDisable),
   h(async (req, res) => {
-    const result = await twofa.disable(req.user, req.body.code);
+    const r = await twofa.disable(req.user, req.body.code);
     audit(req, '2fa_disable', req.user.email);
-    res.json(result);
+    res.json(r);
   })
 );
 
-// ── wallet ────────────────────────────────────────────────────────────────────
+// ── wallet (read-only data + broadcast; NO server signing) ────────────────────────
 
-router.get('/api/wallet/profile', authed, (req, res) => {
-  res.json(svc.publicProfile(req.user));
-});
+router.get('/api/wallet/profile', authed, (req, res) => res.json(svc.publicProfile(req.user)));
 
 router.get('/api/wallet/address', authed, (req, res) => {
   res.json({
@@ -199,65 +172,77 @@ router.get('/api/wallet/address', authed, (req, res) => {
   });
 });
 
-// Rotate to a fresh receive address (privacy; funds at any prior address remain spendable).
 router.post(
   '/api/wallet/address/new',
   authed,
-  h(async (req, res) => {
-    res.json(await svc.rotateReceiveAddress(req.user));
-  })
+  h(async (req, res) => res.json(await svc.rotateReceiveAddress(req.user)))
 );
 
 router.get(
   '/api/wallet/balance',
   authed,
+  h(async (req, res) => res.json(await svc.getBalance(req.user)))
+);
+
+// Spendable UTXOs (tagged with derivation index) for CLIENT-SIDE signing.
+router.get(
+  '/api/wallet/utxos',
+  authed,
+  h(async (req, res) => res.json({ utxos: await svc.getSpendableUtxos(req.user) }))
+);
+
+// Resolve a recipient (address / local paymail / external paymail) to {address|script}.
+router.post(
+  '/api/paymail/resolve',
+  authed,
+  validate(schemas.paymailResolve),
   h(async (req, res) => {
-    res.json(await svc.getBalance(req.user));
+    const dest = await svc.resolveRecipient(req.body.to, {
+      satoshis: req.body.satoshis,
+      senderPaymail: svc.publicProfile(req.user).paymail,
+    });
+    res.json(dest);
   })
 );
 
+// Broadcast a CLIENT-SIGNED transaction; record it in history.
 router.post(
-  '/api/wallet/send',
+  '/api/tx/broadcast',
   authed,
-  validate(schemas.send),
+  validate(schemas.broadcast),
   h(async (req, res) => {
-    const wallet = session.getWallet(req.claims.sid);
-    if (!wallet) throw new ServiceError('session expired; please log in again', 401);
-    const { to, satoshis } = req.body;
-    const result = await svc.send(wallet, {
-      to,
-      satoshis,
-      senderPaymail: svc.publicProfile(req.user).paymail,
-    });
+    const { rawHex, to, satoshis } = req.body;
+    const txid = await svc.broadcast(rawHex);
     await db
       .insertTransaction({
-        txid: result.txid,
+        txid,
         userId: req.user.id,
         direction: 'out',
-        amountSats: result.satoshis,
-        address: result.to,
+        amountSats: satoshis || 0,
+        address: to || null,
         status: 'broadcast',
       })
       .catch(() => {});
-    audit(req, 'send', req.user.email, {
-      to: result.to,
-      satoshis: result.satoshis,
-      txid: result.txid,
-    });
-    res.json(result);
+    audit(req, 'broadcast', req.user.email, { txid, to, satoshis });
+    res.json({ txid });
   })
 );
 
 router.get(
   '/api/wallet/history',
   authed,
-  h(async (req, res) => {
-    const transactions = await db.listTransactions(req.user.id, { limit: 100 });
-    res.json({ transactions });
-  })
+  h(async (req, res) =>
+    res.json({ transactions: await db.listTransactions(req.user.id, { limit: 100 }) })
+  )
 );
 
-// ── notifications (incoming deposits, etc.) ─────────────────────────────────────
+router.get(
+  '/api/ordinals',
+  authed,
+  h(async (req, res) => res.json({ ordinals: await svc.listOrdinals(req.user) }))
+);
+
+// ── notifications ────────────────────────────────────────────────────────────
 
 router.get(
   '/api/notifications',
@@ -271,70 +256,32 @@ router.get(
 router.post(
   '/api/notifications/:id/read',
   authed,
-  h(async (req, res) => {
-    const ok = await db.markNotificationRead(req.user.id, Number(req.params.id));
-    res.json({ ok });
-  })
+  h(async (req, res) =>
+    res.json({ ok: await db.markNotificationRead(req.user.id, Number(req.params.id)) })
+  )
 );
 
-// ── ordinals (1Sat) ──────────────────────────────────────────────────────────
+// ── encrypted backup (Tier 1) — opaque blob the server cannot decrypt ─────────────
 
-const requireWallet = (req) => {
-  const wallet = session.getWallet(req.claims.sid);
-  if (!wallet) throw new ServiceError('session expired; please log in again', 401);
-  return wallet;
-};
+router.put(
+  '/api/backup',
+  authed,
+  validate(schemas.backupPut),
+  h(async (req, res) => {
+    await db.putBackup(req.user.id, req.body);
+    audit(req, 'backup_put', req.user.email, { scheme: req.body.scheme });
+    res.json({ ok: true });
+  })
+);
 
 router.get(
-  '/api/ordinals',
+  '/api/backup',
   authed,
   h(async (req, res) => {
-    res.json({ ordinals: await svc.listOrdinals(requireWallet(req)) });
+    const backup = await db.getBackup(req.user.id);
+    if (!backup) return res.status(404).json({ error: 'no backup' });
+    res.json(backup);
   })
 );
-
-router.post(
-  '/api/ordinals/inscribe',
-  authed,
-  validate(schemas.ordinalsInscribe),
-  h(async (req, res) => {
-    const result = await svc.inscribeOrdinal(requireWallet(req), req.body);
-    await db
-      .insertTransaction({
-        txid: result.txid,
-        userId: req.user.id,
-        direction: 'out',
-        amountSats: 1,
-        address: 'inscription',
-        status: 'broadcast',
-      })
-      .catch(() => {});
-    audit(req, 'inscribe', req.user.email, { txid: result.txid });
-    res.json(result);
-  })
-);
-
-router.post(
-  '/api/ordinals/transfer',
-  authed,
-  validate(schemas.ordinalsTransfer),
-  h(async (req, res) => {
-    const result = await svc.transferOrdinal(requireWallet(req), req.body);
-    audit(req, 'ordinal_transfer', req.user.email, { txid: result.txid, to: result.to });
-    res.json(result);
-  })
-);
-
-// Escape hatch: reveal the full mnemonic so the user can move to self-custody. Requires
-// an active (unlocked) session, since the seed only exists in the session vault.
-router.get('/api/wallet/export', authed, (req, res) => {
-  const wallet = session.getWallet(req.claims.sid);
-  if (!wallet) throw new ServiceError('session expired; please log in again', 401);
-  audit(req, 'export', req.user.email);
-  res.json({
-    mnemonic: wallet.mnemonic,
-    warning: 'Anyone with these words controls your funds. Store them offline.',
-  });
-});
 
 module.exports = { router, authed };
