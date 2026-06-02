@@ -1,5 +1,5 @@
-// Thin typed API client for the web3keys server. Same-origin in production; proxied to
-// :3000 in dev (see vite.config.ts). The JWT is held in localStorage.
+// Typed API client for the non-custodial web3keys server. Same-origin in prod; proxied
+// to :3000 in dev. The server never receives a seed — only public material and signed txs.
 
 const TOKEN_KEY = 'web3keys_token';
 
@@ -27,6 +27,15 @@ export type Notification = {
   payload: Record<string, unknown> | null;
   read: boolean;
   createdAt: string;
+};
+
+export type Utxo = { txid: string; vout: number; satoshis: number; script: string; index: number };
+
+export type RegisterPublics = {
+  identityKey: string;
+  financeXpub: string;
+  tokensXpub: string;
+  identityXpub: string;
 };
 
 export class ApiError extends Error {
@@ -71,11 +80,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 export const api = {
   health: () => request<{ network: string; domain: string }>('GET', '/health'),
 
-  register: (email: string, password: string) =>
-    request<{ recoveryShare: string; profile: Profile }>('POST', '/api/auth/register', {
-      email,
-      password,
-    }),
+  register: (email: string, password: string, publics: RegisterPublics) =>
+    request<{ profile: Profile }>('POST', '/api/auth/register', { email, password, ...publics }),
   verify: (email: string, code: string) =>
     request<{ verified: boolean; profile: Profile }>('POST', '/api/auth/verify', { email, code }),
   resend: (email: string) => request<{ otpSent: boolean }>('POST', '/api/auth/resend', { email }),
@@ -85,12 +91,6 @@ export const api = {
       password,
       totpCode,
     }),
-  recover: (email: string, recoveryShare: string, newPassword: string) =>
-    request<{ recoveryShare: string; profile: Profile }>('POST', '/api/auth/recover', {
-      email,
-      recoveryShare,
-      newPassword,
-    }),
   logout: () => request<{ ok: boolean }>('POST', '/api/auth/logout'),
 
   profile: () => request<Profile>('GET', '/api/wallet/profile'),
@@ -98,19 +98,20 @@ export const api = {
   address: () =>
     request<{ address: string; index: number; paymail: string }>('GET', '/api/wallet/address'),
   newAddress: () => request<{ address: string; index: number }>('POST', '/api/wallet/address/new'),
-  send: (to: string, satoshis: number) =>
-    request<{ txid: string; fee: number; to: string; satoshis: number }>('POST', '/api/wallet/send', {
-      to,
-      satoshis,
-    }),
+  utxos: () => request<{ utxos: Utxo[] }>('GET', '/api/wallet/utxos'),
+  resolve: (to: string, satoshis: number) =>
+    request<{ address?: string; script?: string }>('POST', '/api/paymail/resolve', { to, satoshis }),
+  broadcast: (rawHex: string, meta: { to?: string; satoshis?: number } = {}) =>
+    request<{ txid: string }>('POST', '/api/tx/broadcast', { rawHex, ...meta }),
   history: () => request<{ transactions: Tx[] }>('GET', '/api/wallet/history'),
-  exportSeed: () => request<{ mnemonic: string; warning: string }>('GET', '/api/wallet/export'),
+
+  getBackup: () => request<{ scheme: string; ciphertext: string }>('GET', '/api/backup'),
+  putBackup: (scheme: string, ciphertext: string) =>
+    request<{ ok: boolean }>('PUT', '/api/backup', { scheme, ciphertext }),
 
   notifications: () => request<{ notifications: Notification[] }>('GET', '/api/notifications'),
   markRead: (id: number) => request<{ ok: boolean }>('POST', `/api/notifications/${id}/read`),
 
   twoFactorSetup: () => request<{ otpauth: string; secret: string }>('POST', '/api/2fa/setup'),
   twoFactorEnable: (code: string) => request<{ enabled: boolean }>('POST', '/api/2fa/enable', { code }),
-  twoFactorDisable: (code: string) =>
-    request<{ enabled: boolean }>('POST', '/api/2fa/disable', { code }),
 };

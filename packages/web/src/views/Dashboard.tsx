@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
 import QRCode from 'qrcode';
 import { api, type Profile, type Tx, type Notification } from '../api';
+import { buildSignedTx, encryptBackup } from '../wallet';
+import { walletSession } from '../walletSession';
+
+const BSV = (sats: number) => `${(sats / 1e8).toFixed(8)} BSV`;
 
 function Qr({ value }: { value: string }) {
   const [src, setSrc] = useState('');
@@ -10,17 +14,9 @@ function Qr({ value }: { value: string }) {
       .catch(() => setSrc(''));
   }, [value]);
   return src ? (
-    <img
-      src={src}
-      alt="receive address QR"
-      width={180}
-      height={180}
-      style={{ display: 'block', margin: '8px auto', borderRadius: 10 }}
-    />
+    <img src={src} alt="QR" width={180} height={180} style={{ display: 'block', margin: '8px auto', borderRadius: 10 }} />
   ) : null;
 }
-
-const BSV = (sats: number) => `${(sats / 1e8).toFixed(8)} BSV`;
 
 export function Dashboard({ profile, onLogout }: { profile: Profile; onLogout: () => void }) {
   const [tab, setTab] = useState<'wallet' | 'activity' | 'settings'>('wallet');
@@ -31,24 +27,15 @@ export function Dashboard({ profile, onLogout }: { profile: Profile; onLogout: (
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
 
-  async function guard(fn: () => Promise<void>) {
-    setErr('');
-    setMsg('');
-    try {
-      await fn();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Error');
-    }
+  function refresh() {
+    api.balance().then((b) => setBalance(b.confirmed + b.unconfirmed)).catch(() => setBalance(null));
+    api.history().then((h) => setTxs(h.transactions)).catch(() => {});
+    api.notifications().then((n) => setNotes(n.notifications)).catch(() => {});
   }
 
   useEffect(() => {
     api.address().then((a) => setAddress(a.address)).catch(() => {});
-    api
-      .balance()
-      .then((b) => setBalance(b.confirmed + b.unconfirmed))
-      .catch(() => setBalance(null));
-    api.history().then((h) => setTxs(h.transactions)).catch(() => {});
-    api.notifications().then((n) => setNotes(n.notifications)).catch(() => {});
+    refresh();
   }, []);
 
   return (
@@ -60,7 +47,6 @@ export function Dashboard({ profile, onLogout }: { profile: Profile; onLogout: (
           </button>
         ))}
       </div>
-
       {err && <div className="alert">{err}</div>}
       {msg && <div className="alert ok">{msg}</div>}
 
@@ -69,23 +55,21 @@ export function Dashboard({ profile, onLogout }: { profile: Profile; onLogout: (
           profile={profile}
           balance={balance}
           address={address}
-          onRotate={() =>
-            guard(async () => {
-              const a = await api.newAddress();
-              setAddress(a.address);
-            })
-          }
+          onRotate={async () => {
+            try {
+              setAddress((await api.newAddress()).address);
+            } catch (e) {
+              setErr(e instanceof Error ? e.message : 'Error');
+            }
+          }}
           onSent={(txid) => {
             setMsg(`Sent — ${txid.slice(0, 16)}…`);
-            api.balance().then((b) => setBalance(b.confirmed + b.unconfirmed));
-            api.history().then((h) => setTxs(h.transactions));
+            refresh();
           }}
           setErr={setErr}
         />
       )}
-
-      {tab === 'activity' && <Activity txs={txs} notes={notes} onRead={(id) => api.markRead(id)} />}
-
+      {tab === 'activity' && <Activity txs={txs} notes={notes} />}
       {tab === 'settings' && <Settings setMsg={setMsg} setErr={setErr} />}
 
       <div className="spacer" />
@@ -129,19 +113,27 @@ function Wallet({
   const [amount, setAmount] = useState('');
   const [busy, setBusy] = useState(false);
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setErr('');
-    api
-      .send(to, Math.round(Number(amount)))
-      .then((r) => {
-        setTo('');
-        setAmount('');
-        onSent(r.txid);
-      })
-      .catch((x) => setErr(x instanceof Error ? x.message : 'Send failed'))
-      .finally(() => setBusy(false));
+    try {
+      const amt = Math.round(Number(amount));
+      if (!Number.isInteger(amt) || amt <= 0) throw new Error('Enter a valid amount');
+      // CLIENT-SIDE: fetch UTXOs, resolve recipient, build + sign locally, then broadcast.
+      const { utxos } = await api.utxos();
+      if (!utxos.length) throw new Error('No spendable funds');
+      const dest = await api.resolve(to, amt);
+      const rawHex = buildSignedTx(walletSession.get(), utxos, dest, amt);
+      const { txid } = await api.broadcast(rawHex, { to, satoshis: amt });
+      setTo('');
+      setAmount('');
+      onSent(txid);
+    } catch (x) {
+      setErr(x instanceof Error ? x.message : 'Send failed');
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -167,32 +159,19 @@ function Wallet({
         </label>
         <label>
           Amount (satoshis)
-          <input
-            type="number"
-            min={1}
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            required
-          />
+          <input type="number" min={1} value={amount} onChange={(e) => setAmount(e.target.value)} required />
         </label>
         <button className="primary" disabled={busy}>
-          {busy ? 'Sending…' : 'Send'}
+          {busy ? 'Signing & sending…' : 'Send'}
         </button>
       </form>
     </div>
   );
 }
 
-function Activity({
-  txs,
-  notes,
-  onRead,
-}: {
-  txs: Tx[];
-  notes: Notification[];
-  onRead: (id: number) => Promise<unknown>;
-}) {
+function Activity({ txs, notes }: { txs: Tx[]; notes: Notification[] }) {
   const [items, setItems] = useState(notes);
+  useEffect(() => setItems(notes), [notes]);
   return (
     <div>
       <h2>Notifications</h2>
@@ -203,7 +182,7 @@ function Activity({
           {!n.read && (
             <button
               className="linkbtn"
-              onClick={() => onRead(n.id).then(() => setItems((xs) => xs.filter((x) => x.id !== n.id)))}
+              onClick={() => api.markRead(n.id).then(() => setItems((xs) => xs.filter((x) => x.id !== n.id)))}
             >
               mark read
             </button>
@@ -229,64 +208,89 @@ function Settings({ setMsg, setErr }: { setMsg: (s: string) => void; setErr: (s:
   const [otpauth, setOtpauth] = useState('');
   const [secret, setSecret] = useState('');
   const [code, setCode] = useState('');
-  const [seed, setSeed] = useState('');
+  const [phrase, setPhrase] = useState('');
+  const [backupPass, setBackupPass] = useState('');
 
-  const setup = () =>
-    api
-      .twoFactorSetup()
-      .then((r) => {
-        setOtpauth(r.otpauth);
-        setSecret(r.secret);
-      })
-      .catch((e) => setErr(e.message));
+  const setup2fa = () =>
+    api.twoFactorSetup().then((r) => {
+      setOtpauth(r.otpauth);
+      setSecret(r.secret);
+    }).catch((e) => setErr(e.message));
 
-  const enable = () =>
-    api
-      .twoFactorEnable(code)
-      .then(() => {
-        setMsg('2FA enabled');
-        setOtpauth('');
-        setSecret('');
-        setCode('');
-      })
-      .catch((e) => setErr(e.message));
+  const enable2fa = () =>
+    api.twoFactorEnable(code).then(() => {
+      setMsg('2FA enabled');
+      setOtpauth('');
+      setSecret('');
+      setCode('');
+    }).catch((e) => setErr(e.message));
+
+  const saveBackup = async () => {
+    try {
+      const ct = await encryptBackup(walletSession.get(), backupPass);
+      await api.putBackup('passphrase-pbkdf2-aesgcm', ct);
+      setBackupPass('');
+      setMsg('Encrypted backup saved (only you can decrypt it).');
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Backup failed');
+    }
+  };
 
   return (
     <div>
+      <h2>Encrypted cloud backup</h2>
+      <p className="muted">
+        Optional. Encrypted in your browser under a passphrase we never see — convenience only.
+      </p>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          saveBackup();
+        }}
+      >
+        <label>
+          Backup passphrase
+          <input
+            type="password"
+            value={backupPass}
+            minLength={8}
+            onChange={(e) => setBackupPass(e.target.value)}
+            required
+          />
+        </label>
+        <button className="primary">Save encrypted backup</button>
+      </form>
+
+      <div className="spacer" />
       <h2>Two-factor auth</h2>
       {!otpauth ? (
-        <button className="ghost" onClick={setup}>
+        <button className="ghost" onClick={setup2fa}>
           Set up authenticator app
         </button>
       ) : (
-        <div>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            enable2fa();
+          }}
+        >
           <p className="muted">Add this secret to your authenticator, then enter a code:</p>
           <div className="blob">{secret}</div>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              enable();
-            }}
-          >
-            <label>
-              Code
-              <input value={code} onChange={(e) => setCode(e.target.value)} maxLength={6} />
-            </label>
-            <button className="primary">Enable 2FA</button>
-          </form>
-        </div>
+          <label>
+            Code
+            <input value={code} onChange={(e) => setCode(e.target.value)} maxLength={6} />
+          </label>
+          <button className="primary">Enable 2FA</button>
+        </form>
       )}
 
       <div className="spacer" />
-      <h2>Export wallet</h2>
-      <p className="warn">Reveals your 12-word seed. Anyone with it controls your funds.</p>
-      {seed ? (
-        <div className="blob">{seed}</div>
+      <h2>Recovery phrase</h2>
+      <p className="warn">Reveals your 12 words. Anyone with them controls your funds.</p>
+      {phrase ? (
+        <div className="blob">{phrase}</div>
       ) : (
-        <button
-          className="ghost"
-          onClick={() => api.exportSeed().then((r) => setSeed(r.mnemonic)).catch((e) => setErr(e.message))}
-        >
+        <button className="ghost" onClick={() => setPhrase(walletSession.get())}>
           Reveal recovery phrase
         </button>
       )}

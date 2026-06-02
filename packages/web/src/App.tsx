@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import { api, token, type Profile } from './api';
+import { walletSession } from './walletSession';
 import { Auth } from './views/Auth';
+import { Unlock } from './views/Unlock';
 import { Dashboard } from './views/Dashboard';
 
 export default function App() {
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [unlocked, setUnlocked] = useState(walletSession.unlocked());
   const [loading, setLoading] = useState(true);
   const [network, setNetwork] = useState('');
 
@@ -27,8 +30,25 @@ export default function App() {
   function onLogout() {
     api.logout().catch(() => {});
     token.clear();
+    walletSession.clear();
+    setUnlocked(false);
     setProfile(null);
   }
+
+  let body;
+  if (loading) body = <p className="muted">Loading…</p>;
+  else if (!profile)
+    body = (
+      <Auth
+        onAuthed={(p) => {
+          setProfile(p);
+          setUnlocked(walletSession.unlocked());
+        }}
+      />
+    );
+  else if (!unlocked)
+    body = <Unlock profile={profile} onUnlocked={() => setUnlocked(true)} onLogout={onLogout} />;
+  else body = <Dashboard profile={profile} onLogout={onLogout} />;
 
   return (
     <main className="card">
@@ -39,13 +59,7 @@ export default function App() {
           Your keys. Your BSV. {network && <span className="badge">{network}</span>}
         </p>
       </header>
-      {loading ? (
-        <p className="muted">Loading…</p>
-      ) : profile ? (
-        <Dashboard profile={profile} onLogout={onLogout} />
-      ) : (
-        <Auth onAuthed={setProfile} />
-      )}
+      {body}
     </main>
   );
 }

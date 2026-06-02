@@ -8,6 +8,9 @@
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
     <title>web3keys — BSV wallet</title>
+    <!-- @smartledger/bsv browser bundle (exposes window.bsv) for client-side key
+         generation and transaction signing — keys never leave the browser. -->
+    <script src="https://cdn.jsdelivr.net/npm/@smartledger/bsv@4.0.1/bsv.min.js"></script>
   </head>
   <body>
     <div id="root"></div>
