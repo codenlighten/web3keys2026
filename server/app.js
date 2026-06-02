@@ -1,10 +1,13 @@
 'use strict';
 
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const { config } = require('./config');
 const { router: apiRouter } = require('./routes');
 const { router: paymailRouter } = require('./paymail');
+
+const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
 /** Build the Express app (no listen) — importable for tests. */
 function createApp() {
@@ -14,6 +17,10 @@ function createApp() {
   app.set('trust proxy', 1);
   app.use(cors());
   app.use(express.json({ limit: '256kb' }));
+
+  // Static frontend (register/login SPA). API/paymail routes below are unaffected
+  // since no static file matches those paths.
+  app.use(express.static(PUBLIC_DIR));
 
   app.get('/health', (req, res) => res.json({ ok: true, network: config.network, domain: config.domain }));
 
