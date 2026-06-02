@@ -37,6 +37,18 @@ function openUserShare(sealed, password) {
   return security.aesDecrypt(sealed, key).toString('utf8'); // throws on wrong password
 }
 
+// ── master-key sealing (S3, and other server-only secrets like TOTP) ────────────
+
+/** Seal a string under the server master key → JSON string {iv,tag,ciphertext,v}. */
+function sealMaster(plaintext) {
+  return JSON.stringify({ ...security.aesEncrypt(plaintext, masterKey()), v: 1 });
+}
+
+/** Open a sealMaster() JSON string. */
+function openMaster(json) {
+  return security.aesDecrypt(JSON.parse(json), masterKey()).toString('utf8');
+}
+
 // ── S3: master-key-sealed, TTP-bound share ─────────────────────────────────────
 
 /** @returns {{ iv, tag, ciphertext, keyVersion }} (hex) */
@@ -48,4 +60,11 @@ function openTtpShare(sealed) {
   return security.aesDecrypt(sealed, masterKey()).toString('utf8');
 }
 
-module.exports = { sealUserShare, openUserShare, sealTtpShare, openTtpShare };
+module.exports = {
+  sealUserShare,
+  openUserShare,
+  sealTtpShare,
+  openTtpShare,
+  sealMaster,
+  openMaster,
+};

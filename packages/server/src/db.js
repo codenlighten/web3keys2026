@@ -96,6 +96,14 @@ async function setPassword(email, passwordVerifier) {
   return rowCount > 0;
 }
 
+async function setTotp(email, totpEnc, enabled) {
+  const { rowCount } = await query(
+    'UPDATE users SET totp_enc = $2, totp_enabled = $3 WHERE email = $1',
+    [email, totpEnc, !!enabled]
+  );
+  return rowCount > 0;
+}
+
 async function bumpReceiveIndex(email) {
   const row = await one(
     'UPDATE users SET receive_index = receive_index + 1 WHERE email = $1 RETURNING receive_index',
@@ -151,6 +159,7 @@ module.exports = {
   findByAlias,
   setVerified,
   setPassword,
+  setTotp,
   bumpReceiveIndex,
   putUserShare,
   getUserShare,

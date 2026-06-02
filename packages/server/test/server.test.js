@@ -9,6 +9,7 @@ process.env.BASE_URL = 'https://web3keys.com';
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
+const { authenticator } = require('otplib');
 
 const security = require('../src/security');
 const shares = require('../src/shares');
@@ -203,4 +204,91 @@ test('duplicate registration is rejected', async () => {
   assert.equal(first.status, 201);
   const second = await api('POST', '/api/auth/register', { email, password: 'password1234' });
   assert.equal(second.status, 409);
+});
+
+// ── Phase 3: security hardening ────────────────────────────────────────────────
+
+test('input validation rejects malformed requests (400)', async () => {
+  assert.equal(
+    (await api('POST', '/api/auth/register', { email: 'nope', password: 'x' })).status,
+    400
+  );
+  assert.equal(
+    (await api('POST', '/api/auth/register', { email: 'a@b.co', password: 'short' })).status,
+    400
+  );
+  assert.equal(
+    (await api('POST', '/api/auth/verify', { email: 'a@b.co', code: 'abc' })).status,
+    400
+  );
+  const bad = await api('POST', '/api/auth/register', {});
+  assert.equal(bad.status, 400);
+  assert.ok(Array.isArray(bad.json.details));
+});
+
+test('security headers are present (helmet/CSP)', async () => {
+  const res = await fetch(base + '/health');
+  assert.ok(res.headers.get('content-security-policy'));
+  assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+  assert.ok(res.headers.get('content-security-policy').includes('cdn.jsdelivr.net')); // bsv CDN allowed
+});
+
+async function registerLogin(email, password) {
+  await api('POST', '/api/auth/register', { email, password });
+  await api('POST', '/api/auth/verify', { email, code: '123456' });
+  return (await api('POST', '/api/auth/login', { email, password })).json.token;
+}
+
+test('TOTP 2FA: setup → enable → enforced at login', async () => {
+  const email = 'tina@example.com';
+  const password = 'password1234';
+  const token = await registerLogin(email, password);
+
+  // enrol
+  const setup = await api('POST', '/api/2fa/setup', null, token);
+  assert.equal(setup.status, 200);
+  assert.ok(setup.json.otpauth.startsWith('otpauth://totp/'));
+  const secret = setup.json.secret;
+
+  // enabling requires a valid code
+  assert.equal((await api('POST', '/api/2fa/enable', { code: '000000' }, token)).status, 401);
+  const enable = await api(
+    'POST',
+    '/api/2fa/enable',
+    { code: authenticator.generate(secret) },
+    token
+  );
+  assert.equal(enable.status, 200);
+
+  // login now requires the TOTP code
+  const noCode = await api('POST', '/api/auth/login', { email, password });
+  assert.equal(noCode.status, 401);
+  assert.ok(noCode.json.twoFactorRequired);
+
+  const wrong = await api('POST', '/api/auth/login', { email, password, totpCode: '000000' });
+  assert.equal(wrong.status, 401);
+
+  const ok = await api('POST', '/api/auth/login', {
+    email,
+    password,
+    totpCode: authenticator.generate(secret),
+  });
+  assert.equal(ok.status, 200);
+  assert.ok(ok.json.token);
+});
+
+test('account lockout after repeated failed logins (429)', async () => {
+  const email = 'liam@example.com';
+  const password = 'password1234';
+  await api('POST', '/api/auth/register', { email, password });
+  await api('POST', '/api/auth/verify', { email, code: '123456' });
+
+  for (let i = 0; i < 5; i++) {
+    const r = await api('POST', '/api/auth/login', { email, password: 'wrongpassword' });
+    assert.equal(r.status, 401);
+  }
+  // now locked — even the correct password is refused with 429
+  const locked = await api('POST', '/api/auth/login', { email, password });
+  assert.equal(locked.status, 429);
+  assert.ok(locked.json.retryAfterSec > 0);
 });

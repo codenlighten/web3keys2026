@@ -5,6 +5,7 @@ const { config } = require('./config');
 const db = require('./db');
 const security = require('./security');
 const shares = require('./shares');
+const { ServiceError } = require('./errors');
 const { sendOtpEmail } = require('./mailer');
 
 /**
@@ -17,13 +18,6 @@ const { sendOtpEmail } = require('./mailer');
  */
 
 const provider = new WhatsOnChainProvider({ network: config.network });
-
-class ServiceError extends Error {
-  constructor(message, status = 400) {
-    super(message);
-    this.status = status;
-  }
-}
 
 function sanitizeAlias(email) {
   return (

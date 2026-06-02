@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const pinoHttp = require('pino-http');
 const { config } = require('./config');
 const { logger } = require('./logger');
@@ -37,6 +38,26 @@ function createApp() {
       })
     );
   }
+
+  // Security headers + CSP. script-src allows the @smartledger/bsv CDN the SPA loads;
+  // tighten further once the React build (Phase 5) bundles its own JS.
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", 'https://cdn.jsdelivr.net'],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:'],
+          connectSrc: ["'self'"],
+          objectSrc: ["'none'"],
+          baseUri: ["'self'"],
+          frameAncestors: ["'none'"],
+        },
+      },
+      crossOriginEmbedderPolicy: false,
+    })
+  );
 
   app.use(cors());
   app.use(express.json({ limit: '256kb' }));
@@ -80,7 +101,9 @@ function createApp() {
     if (status >= 500) {
       (req.log || logger).error({ err }, 'request failed');
     }
-    res.status(status).json({ error: status >= 500 ? 'internal error' : err.message });
+    const body = { error: status >= 500 ? 'internal error' : err.message };
+    if (status < 500 && err.extra) Object.assign(body, err.extra);
+    res.status(status).json(body);
   });
 
   return app;

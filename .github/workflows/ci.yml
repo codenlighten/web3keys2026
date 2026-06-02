@@ -23,6 +23,9 @@ jobs:
         run: npx prettier --check "packages/**/*.{js,json,css,html}" "*.{js,json}"
       - name: Test
         run: npm test
+      - name: Dependency audit (high+)
+        run: npm audit --audit-level=high
+        continue-on-error: true
 
   integration:
     runs-on: ubuntu-latest
