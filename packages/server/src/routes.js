@@ -10,6 +10,7 @@ const session = require('./session');
 const twofa = require('./twofa');
 const lockout = require('./lockout');
 const { validate } = require('./middleware');
+const { recordEvent } = require('./metrics');
 const { getRedis, hasRedis } = require('./redis');
 
 const router = express.Router();
@@ -41,6 +42,7 @@ router.post(
   h(async (req, res) => {
     const result = await svc.register(req.body);
     audit(req, 'register', req.body.email);
+    recordEvent('register', 'ok');
     res.status(201).json(result);
   })
 );
@@ -82,6 +84,7 @@ router.post(
       if (e.status === 401) {
         await lockout.recordFailure(email);
         audit(req, 'login_fail', email, { reason: 'credentials' });
+        recordEvent('login', 'fail');
       }
       throw e;
     }
@@ -100,6 +103,7 @@ router.post(
     const { token, sid } = session.issueToken(user.email);
     await session.createSession(sid, user.email);
     audit(req, 'login_success', email);
+    recordEvent('login', 'success');
     res.json({ token, profile: svc.publicProfile(user) });
   })
 );
@@ -224,6 +228,7 @@ router.post(
       })
       .catch(() => {});
     audit(req, 'broadcast', req.user.email, { txid, to, satoshis });
+    recordEvent('broadcast', 'ok');
     res.json({ txid });
   })
 );

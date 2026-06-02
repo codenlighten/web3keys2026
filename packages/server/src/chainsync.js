@@ -19,7 +19,7 @@ async function syncUserDeposits(
   let empty = 0;
   for (let i = 0; i <= maxIndex && empty < gapLimit; i++) {
     const address = svc.depositAddress(user, i);
-    // eslint-disable-next-line no-await-in-loop
+
     const utxos = await provider.getUtxos(address);
     if (!utxos.length) {
       empty += 1;
@@ -30,7 +30,7 @@ async function syncUserDeposits(
       const key = `${u.txid}:${u.vout}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      // eslint-disable-next-line no-await-in-loop
+
       await db.insertTransaction({
         txid: u.txid,
         userId: user.id,
@@ -40,7 +40,7 @@ async function syncUserDeposits(
         vout: u.vout,
         status: 'confirmed',
       });
-      // eslint-disable-next-line no-await-in-loop
+
       const n = await db.insertNotification({
         userId: user.id,
         type: 'deposit',
@@ -58,7 +58,6 @@ async function syncAll(opts = {}) {
   let total = 0;
   for (const user of users) {
     try {
-      // eslint-disable-next-line no-await-in-loop
       const created = await syncUserDeposits(user, opts);
       total += created.length;
     } catch (err) {

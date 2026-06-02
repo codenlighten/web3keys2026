@@ -10,6 +10,7 @@ const { config } = require('./config');
 const { logger } = require('./logger');
 const dbPool = require('./db/pool');
 const { hasRedis, pingRedis } = require('./redis');
+const { metricsMiddleware, metricsHandler } = require('./metrics');
 const { router: apiRouter } = require('./routes');
 const { router: paymailRouter } = require('./paymail');
 
@@ -60,6 +61,10 @@ function createApp() {
 
   app.use(cors());
   app.use(express.json({ limit: '256kb' }));
+  app.use(metricsMiddleware);
+
+  // Prometheus scrape endpoint (optionally token-gated via METRICS_TOKEN).
+  app.get('/metrics', metricsHandler);
 
   // Static frontend (register/login SPA). API/paymail routes below are unaffected
   // since no static file matches those paths.

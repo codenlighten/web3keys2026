@@ -54,6 +54,9 @@ const config = {
   otpTtlMs: Number(process.env.OTP_TTL_MS || 10 * 60 * 1000), // 10 min
   otpLength: 6,
 
+  // Optional token to gate GET /metrics (recommended in prod; also restrict via nginx).
+  metricsToken: process.env.METRICS_TOKEN || '',
+
   // scrypt cost parameters (used for password verifier + mnemonic encryption key).
   scrypt: { N: 16384, r: 8, p: 1, keylen: 32 },
 
@@ -80,6 +83,7 @@ const configSchema = z.object({
   sessionTtlMs: z.number().int().positive(),
   otpTtlMs: z.number().int().positive(),
   otpLength: z.number().int().min(4).max(10),
+  metricsToken: z.string(),
   scrypt: z.object({ N: z.number(), r: z.number(), p: z.number(), keylen: z.number() }),
   smtp: z.object({
     host: z.string().optional(),

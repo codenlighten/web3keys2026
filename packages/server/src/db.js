@@ -6,13 +6,11 @@ const { migrate } = require('./db/migrate');
 /**
  * Application data access (Postgres). All methods are async.
  *
- * What is stored per user (and, deliberately, what is NOT):
+ * NON-CUSTODIAL: the server stores only PUBLIC material and opaque ciphertext.
  *   STORED: email, password verifier, PUBLIC xpubs + identity public key, paymail alias,
- *           receive-address counter; plus two SEALED Shamir shares in separate stores —
- *           S2 in user_shares (sealed under the user's password) and S3 in ttp_shares
- *           (sealed under the server master key, never in the DB).
- *   NOT STORED: the plaintext mnemonic, any private key, or any single reconstructable
- *           key. At rest, no two openable shares exist without a password / master key.
+ *           receive-address counter, an opaque user-encrypted backup blob (server cannot
+ *           decrypt), and WebAuthn credentials.
+ *   NOT STORED: any seed, private key, or share. The server can never sign.
  */
 
 async function init() {
@@ -256,7 +254,6 @@ async function deleteUser(userId) {
     'addresses',
     'webhooks',
   ]) {
-    // eslint-disable-next-line no-await-in-loop
     await query(`DELETE FROM ${t} WHERE user_id = $1`, [userId]).catch(() => {});
   }
   const { rowCount } = await query('DELETE FROM users WHERE id = $1', [userId]);

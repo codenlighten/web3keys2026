@@ -292,6 +292,16 @@ test('GDPR: account deletion requires the password and erases the user', async (
   assert.equal(await db.findByEmail(email), null);
 });
 
+test('Prometheus /metrics endpoint exposes metrics', async () => {
+  const res = await fetch(base + '/metrics');
+  assert.equal(res.status, 200);
+  const body = await res.text();
+  assert.match(res.headers.get('content-type') || '', /text\/plain/);
+  assert.ok(body.includes('web3keys_http_request_duration_seconds'));
+  assert.ok(body.includes('web3keys_events_total')); // populated by earlier registers/logins
+  assert.ok(body.includes('process_cpu') || body.includes('nodejs_'));
+});
+
 test('duplicate registration is rejected', async () => {
   const { body } = regBody('dupe@example.com', 'password1234');
   assert.equal((await api('POST', '/api/auth/register', body)).status, 201);

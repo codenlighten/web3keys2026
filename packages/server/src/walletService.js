@@ -177,7 +177,6 @@ async function scanXpubSatoshis(user, { gapLimit = 20, maxIndex = 500 } = {}) {
   let total = 0;
   let empty = 0;
   for (let i = 0; i <= maxIndex && empty < gapLimit; i++) {
-    // eslint-disable-next-line no-await-in-loop
     const utxos = await provider.getUtxos(deriveFromXpub(user.finance_xpub, i));
     if (!utxos.length) {
       empty += 1;
@@ -207,7 +206,7 @@ async function getSpendableUtxos(user, { gapLimit = 20, maxIndex = 500 } = {}) {
   let empty = 0;
   for (let i = 0; i <= maxIndex && empty < gapLimit; i++) {
     const address = deriveFromXpub(user.finance_xpub, i);
-    // eslint-disable-next-line no-await-in-loop
+
     const utxos = await provider.getUtxos(address);
     if (!utxos.length) {
       empty += 1;
@@ -240,7 +239,7 @@ async function listOrdinals(user, { gapLimit = 20, maxIndex = 200 } = {}) {
       .deriveChild(i)
       .publicKey.toAddress(net())
       .toString();
-    // eslint-disable-next-line no-await-in-loop
+
     const utxos = await provider.getOrdinalUtxos(address);
     if (!utxos.length) {
       empty += 1;
